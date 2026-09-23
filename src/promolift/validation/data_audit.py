@@ -52,7 +52,7 @@ class DatasetAudit:
     row_count: int
     column_count: int
     columns: list[ColumnAudit] = field(default_factory=list)
-    duplicate_row_count: int | None = None
+    duplicate_key_count: int | None = None
 
 
 def inventory(base_dir: Path | None = None) -> list[FileInventoryEntry]:
@@ -114,9 +114,11 @@ def audit_dataset(
         for col, dtype in schema.items()
     ]
 
-    duplicate_row_count = None
+    duplicate_key_count = None
     if key_columns:
-        duplicate_row_count = (
+        # Count of distinct key values that occur more than once, not total
+        # duplicate rows -- e.g. a key appearing 3 times counts once here.
+        duplicate_key_count = (
             lf.group_by(key_columns).len().filter(pl.col("len") > 1).select(pl.len()).collect().item()
         )
 
@@ -127,7 +129,7 @@ def audit_dataset(
         row_count=row_count,
         column_count=len(schema),
         columns=column_audits,
-        duplicate_row_count=duplicate_row_count,
+        duplicate_key_count=duplicate_key_count,
     )
 
 
