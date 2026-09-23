@@ -25,7 +25,10 @@ def test_path_for_maps_each_dataset_to_its_expected_filename(tmp_path: Path) -> 
     assert path_for(Dataset.PURCHASES, tmp_path) == tmp_path / "purchases.csv"
     assert path_for(Dataset.UPLIFT_TRAIN, tmp_path) == tmp_path / "uplift_train.csv"
     assert path_for(Dataset.UPLIFT_TEST, tmp_path) == tmp_path / "uplift_test.csv"
-    assert path_for(Dataset.UPLIFT_SAMPLE_SUBMISSION, tmp_path) == tmp_path / "uplift_sample_submission.csv"
+    assert (
+        path_for(Dataset.UPLIFT_SAMPLE_SUBMISSION, tmp_path)
+        == tmp_path / "uplift_sample_submission.csv"
+    )
 
 
 def test_resolve_path_raises_clear_error_for_missing_file(tmp_path: Path) -> None:

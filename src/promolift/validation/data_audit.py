@@ -62,7 +62,9 @@ def inventory(base_dir: Path | None = None) -> list[FileInventoryEntry]:
         path = path_for(dataset, base_dir)
         exists = path.exists()
         size = path.stat().st_size if exists else None
-        entries.append(FileInventoryEntry(name=dataset.value, path=path, exists=exists, size_bytes=size))
+        entries.append(
+            FileInventoryEntry(name=dataset.value, path=path, exists=exists, size_bytes=size)
+        )
     return entries
 
 
@@ -119,7 +121,12 @@ def audit_dataset(
         # Count of distinct key values that occur more than once, not total
         # duplicate rows -- e.g. a key appearing 3 times counts once here.
         duplicate_key_count = (
-            lf.group_by(key_columns).len().filter(pl.col("len") > 1).select(pl.len()).collect().item()
+            lf.group_by(key_columns)
+            .len()
+            .filter(pl.col("len") > 1)
+            .select(pl.len())
+            .collect()
+            .item()
         )
 
     return DatasetAudit(
@@ -133,7 +140,9 @@ def audit_dataset(
     )
 
 
-def column_cardinality(dataset: Dataset, columns: list[str], base_dir: Path | None = None) -> dict[str, int]:
+def column_cardinality(
+    dataset: Dataset, columns: list[str], base_dir: Path | None = None
+) -> dict[str, int]:
     """Return the number of unique values per column, for key/uniqueness checks."""
     lf = load_lazy(dataset, base_dir)
     stats = lf.select([pl.col(c).n_unique().alias(c) for c in columns]).collect().row(0, named=True)

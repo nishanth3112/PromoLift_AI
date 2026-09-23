@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 
 import polars as pl
 
 
-class Dataset(str, Enum):
+class Dataset(StrEnum):
     """Registry of the six raw X5 RetailHero files."""
 
     CLIENTS = "clients"
