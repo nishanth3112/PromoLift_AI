@@ -43,13 +43,18 @@ def raw_data_dir(base_dir: Path | None = None) -> Path:
     return base_dir if base_dir is not None else project_root() / "data" / "raw"
 
 
+def path_for(dataset: Dataset, base_dir: Path | None = None) -> Path:
+    """Return the expected path for a dataset file, without checking existence."""
+    return raw_data_dir(base_dir) / _FILENAMES[dataset]
+
+
 def resolve_path(dataset: Dataset, base_dir: Path | None = None) -> Path:
     """Resolve the full path to a registered dataset file.
 
     Raises:
         FileNotFoundError: If the file does not exist at the expected location.
     """
-    path = raw_data_dir(base_dir) / _FILENAMES[dataset]
+    path = path_for(dataset, base_dir)
     if not path.exists():
         msg = f"Missing dataset file for {dataset.value!r}: expected at {path}"
         raise FileNotFoundError(msg)
