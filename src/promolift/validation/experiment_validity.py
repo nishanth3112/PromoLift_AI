@@ -13,7 +13,11 @@ from math import copysign, inf, sqrt
 from pathlib import Path
 from statistics import NormalDist
 
+import lightgbm as lgb
+import numpy as np
 import polars as pl
+from sklearn.metrics import roc_auc_score
+from sklearn.model_selection import StratifiedKFold, cross_val_predict
 
 from promolift.data.loader import Dataset, load_lazy
 
@@ -213,4 +217,84 @@ def raw_ate_sanity_check(
         control_rate=control["rate"],
         treatment_count=treatment["count"],
         control_count=control["count"],
+    )
+
+
+@dataclass
+class PropensityCheckReport:
+    """Result of checking whether treatment is predictable from covariates."""
+
+    auc: float
+    treatment_propensity_range: tuple[float, float]
+    control_propensity_range: tuple[float, float]
+    overlap_range: tuple[float, float] | None
+
+
+def propensity_check(
+    covariates: pl.DataFrame,
+    treatment: pl.Series,
+    *,
+    n_folds: int = 5,
+    tail_percentile: float = 0.01,
+    random_state: int = 42,
+) -> PropensityCheckReport:
+    """Check whether treatment assignment is predictable from covariates.
+
+    Under true randomization, no combination of pre-treatment covariates
+    should predict treatment above chance -- fits a LightGBM classifier and
+    reports the cross-validated (out-of-fold) AUC, which should be close to
+    0.5. Also reports the ``[tail_percentile, 1 - tail_percentile]`` range of
+    predicted propensity scores per arm and their overlap: positivity (every
+    unit has a realistic chance of either arm) is a core assumption for
+    causal identification, and a shrinking or empty overlap range is a red
+    flag before any causal model is trusted.
+
+    Args:
+        covariates: One row per unit. String columns are treated as
+            categorical by the underlying classifier; nulls are allowed
+            (handled natively by LightGBM). Caller decides which covariates
+            to check -- e.g. just demographics, or a full engineered feature
+            table.
+        treatment: Binary treatment indicator, same row order as covariates.
+        n_folds: Number of cross-validation folds for out-of-fold predictions.
+        tail_percentile: Tail percentile for the propensity-score ranges.
+        random_state: Seed for reproducibility.
+
+    Returns:
+        overlap_range is None if the treatment and control propensity-score
+        ranges don't overlap at all.
+    """
+    pdf = covariates.to_pandas()
+    for col in pdf.columns:
+        if pdf[col].dtype == object:
+            pdf[col] = pdf[col].astype("category")
+
+    y = treatment.to_numpy()
+    classifier = lgb.LGBMClassifier(n_estimators=200, random_state=random_state, verbose=-1)
+    cv = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=random_state)
+    oof_scores = cross_val_predict(classifier, pdf, y, cv=cv, method="predict_proba")[:, 1]
+
+    auc = roc_auc_score(y, oof_scores)
+
+    lo, hi = tail_percentile, 1 - tail_percentile
+    treatment_scores = oof_scores[y == _TREATMENT]
+    control_scores = oof_scores[y == _CONTROL]
+    treatment_range = (
+        float(np.quantile(treatment_scores, lo)),
+        float(np.quantile(treatment_scores, hi)),
+    )
+    control_range = (
+        float(np.quantile(control_scores, lo)),
+        float(np.quantile(control_scores, hi)),
+    )
+
+    overlap_lo = max(treatment_range[0], control_range[0])
+    overlap_hi = min(treatment_range[1], control_range[1])
+    overlap_range = (overlap_lo, overlap_hi) if overlap_lo < overlap_hi else None
+
+    return PropensityCheckReport(
+        auc=auc,
+        treatment_propensity_range=treatment_range,
+        control_propensity_range=control_range,
+        overlap_range=overlap_range,
     )
