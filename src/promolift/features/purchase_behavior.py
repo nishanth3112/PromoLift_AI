@@ -38,6 +38,10 @@ def build_purchase_behavior_features(
         - ``monetary_total``: sum of purchase_sum across transactions
         - ``monetary_avg``: average purchase_sum per transaction
         - ``monetary_std``: standard deviation of purchase_sum (null if frequency < 2)
+        - ``monetary_cv``: coefficient of variation (``monetary_std / monetary_avg``),
+          a scale-free volatility measure -- this is the feature that showed a
+          clean, strong separation of observed uplift in exploratory analysis,
+          not ``monetary_std`` alone (null if frequency < 2 or monetary_avg is 0)
         - ``points_received_total``: sum of regular + express points received
         - ``points_spent_total``: sum of |regular| + |express| points spent
     """
@@ -60,16 +64,25 @@ def build_purchase_behavior_features(
         )
     )
 
-    return transactions.group_by("client_id").agg(
-        pl.len().alias("frequency"),
-        (pl.lit(reference_date) - pl.col("_dt").max()).dt.total_days().alias("recency_days"),
-        pl.col("purchase_sum").sum().alias("monetary_total"),
-        pl.col("purchase_sum").mean().alias("monetary_avg"),
-        pl.col("purchase_sum").std().alias("monetary_std"),
-        (pl.col("regular_points_received") + pl.col("express_points_received"))
-        .sum()
-        .alias("points_received_total"),
-        (pl.col("regular_points_spent").abs() + pl.col("express_points_spent").abs())
-        .sum()
-        .alias("points_spent_total"),
+    return (
+        transactions.group_by("client_id")
+        .agg(
+            pl.len().alias("frequency"),
+            (pl.lit(reference_date) - pl.col("_dt").max()).dt.total_days().alias("recency_days"),
+            pl.col("purchase_sum").sum().alias("monetary_total"),
+            pl.col("purchase_sum").mean().alias("monetary_avg"),
+            pl.col("purchase_sum").std().alias("monetary_std"),
+            (pl.col("regular_points_received") + pl.col("express_points_received"))
+            .sum()
+            .alias("points_received_total"),
+            (pl.col("regular_points_spent").abs() + pl.col("express_points_spent").abs())
+            .sum()
+            .alias("points_spent_total"),
+        )
+        .with_columns(
+            pl.when(pl.col("monetary_avg") != 0)
+            .then(pl.col("monetary_std") / pl.col("monetary_avg"))
+            .otherwise(None)
+            .alias("monetary_cv")
+        )
     )

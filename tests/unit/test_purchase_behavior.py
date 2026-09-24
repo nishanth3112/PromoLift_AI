@@ -66,6 +66,34 @@ def test_monetary_std_is_null_for_single_transaction_client(tmp_path: Path) -> N
     assert result["monetary_std"].to_list() == [None]
 
 
+def test_monetary_cv_is_std_over_mean(tmp_path: Path) -> None:
+    (tmp_path / "purchases.csv").write_text(
+        "client_id,transaction_id,transaction_datetime,regular_points_received,"
+        "express_points_received,regular_points_spent,express_points_spent,purchase_sum\n"
+        "c1,t1,2019-01-01 00:00:00,0.0,0.0,0.0,0.0,50.0\n"
+        "c1,t2,2019-01-02 00:00:00,0.0,0.0,0.0,0.0,150.0\n"
+    )
+
+    result = build_purchase_behavior_features(datetime(2019, 1, 3), tmp_path).collect()
+
+    expected_std = result["monetary_std"].to_list()[0]
+    expected_mean = result["monetary_avg"].to_list()[0]
+    assert result["monetary_cv"].to_list() == pytest.approx([expected_std / expected_mean])
+
+
+def test_monetary_cv_is_null_when_monetary_avg_is_zero(tmp_path: Path) -> None:
+    (tmp_path / "purchases.csv").write_text(
+        "client_id,transaction_id,transaction_datetime,regular_points_received,"
+        "express_points_received,regular_points_spent,express_points_spent,purchase_sum\n"
+        "c1,t1,2019-01-01 00:00:00,0.0,0.0,0.0,0.0,0.0\n"
+        "c1,t2,2019-01-02 00:00:00,0.0,0.0,0.0,0.0,0.0\n"
+    )
+
+    result = build_purchase_behavior_features(datetime(2019, 1, 3), tmp_path).collect()
+
+    assert result["monetary_cv"].to_list() == [None]
+
+
 def test_points_spent_total_sums_absolute_values(tmp_path: Path) -> None:
     (tmp_path / "purchases.csv").write_text(
         "client_id,transaction_id,transaction_datetime,regular_points_received,"
