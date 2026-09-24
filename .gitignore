@@ -72,3 +72,9 @@ htmlcov/
 models/
 artifacts/
 mlruns/
+
+
+# ==========================================
+# SESSION CONTEXT (local only, never shared)
+# ==========================================
+PROGRESS.md
