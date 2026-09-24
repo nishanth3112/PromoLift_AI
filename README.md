@@ -36,6 +36,12 @@ uv run ruff format .
 uv run ruff check .
 ```
 
+Verify the causal-ML stack (imports, plus tiny mini-fits with `--fit`):
+
+```bash
+uv run python scripts/check_env.py --fit
+```
+
 ## Status
 
 Under active development.

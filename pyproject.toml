@@ -5,11 +5,27 @@ description = "Production-grade causal ML platform for retail promotion incremen
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "catboost>=1.2.10",
+    "causalml>=0.17.0",
+    "dowhy>=0.12",
+    "duckdb>=1.5.5",
+    "econml>=0.17.0",
+    "lightgbm>=4.7.0",
+    "matplotlib>=3.11.2",
+    "mlflow>=3.16.1",
+    "networkx<3.5",
     "numpy>=2.5.3",
-    "pandas>=3.0.6",
+    "optuna>=5.0.0",
+    "ortools>=9.15.6755",
+    "pandas<3",
     "pandera>=0.33.1",
     "polars>=1.44.2",
     "pyarrow>=25.0.1",
+    "pyyaml>=6.0.3",
+    "scikit-learn>=1.9.1",
+    "scikit-uplift>=0.5.1",
+    "seaborn>=0.13.2",
+    "shap>=0.52.0",
 ]
 
 [build-system]
@@ -21,6 +37,18 @@ packages = ["src/promolift", "data_contracts"]
 
 [tool.uv.workspace]
 members = []
+
+[tool.uv]
+# Restrict the universal lockfile to the platforms actually in use (arm64
+# Mac, x86_64 Windows, and the Linux CI runner) -- some causal-ML/optimization
+# dependencies have no valid resolution on platforms nobody on this team
+# develops on: econml's numba pin breaks on x86_64 macOS, and ortools
+# publishes no wheels at all for Windows ARM64.
+environments = [
+    "sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "sys_platform == 'win32' and platform_machine == 'AMD64'",
+]
 
 [dependency-groups]
 dev = [
