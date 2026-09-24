@@ -8,7 +8,7 @@ aggregates would be inflated by however many products were in the basket.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import polars as pl
@@ -16,6 +16,7 @@ import polars as pl
 from promolift.data.loader import Dataset, load_lazy
 
 _DATETIME_FORMAT = "%Y-%m-%d %H:%M:%S"
+_RECENT_WINDOW_DAYS = 30
 
 
 def build_purchase_behavior_features(
@@ -44,8 +45,20 @@ def build_purchase_behavior_features(
           not ``monetary_std`` alone (null if frequency < 2 or monetary_avg is 0)
         - ``points_received_total``: sum of regular + express points received
         - ``points_spent_total``: sum of |regular| + |express| points spent
+        - ``recent_frequency_30d``: number of transactions in the 30 days
+          before ``reference_date`` -- 0 (not null) for a client with purchase
+          history but no recent activity, distinct from the "no purchase
+          history at all" case (null, applied by the left join in
+          ``build.build_feature_table``)
+        - ``recent_monetary_30d``: sum of purchase_sum in the same window
+
+    A momentum/trend signal (e.g. ``recent_frequency_30d`` relative to
+    ``frequency``) is deliberately not pre-computed as a ratio here -- left
+    for the modeling stage, consistent with how ``monetary_cv`` taught us to
+    be careful about what a ratio is actually measuring.
     """
     purchases = load_lazy(Dataset.PURCHASES, base_dir)
+    recent_cutoff = reference_date - timedelta(days=_RECENT_WINDOW_DAYS)
 
     transactions = (
         purchases.select(
@@ -63,6 +76,7 @@ def build_purchase_behavior_features(
             pl.col("transaction_datetime").str.strptime(pl.Datetime, _DATETIME_FORMAT).alias("_dt")
         )
     )
+    is_recent = pl.col("_dt") >= pl.lit(recent_cutoff)
 
     return (
         transactions.group_by("client_id")
@@ -78,6 +92,8 @@ def build_purchase_behavior_features(
             (pl.col("regular_points_spent").abs() + pl.col("express_points_spent").abs())
             .sum()
             .alias("points_spent_total"),
+            is_recent.sum().alias("recent_frequency_30d"),
+            pl.col("purchase_sum").filter(is_recent).sum().alias("recent_monetary_30d"),
         )
         .with_columns(
             pl.when(pl.col("monetary_avg") != 0)
