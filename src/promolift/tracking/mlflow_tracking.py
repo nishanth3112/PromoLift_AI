@@ -2,7 +2,9 @@
 
 By default runs go to a local SQLite store under ``mlruns/`` at the repository
 root (gitignored); no MLflow server or account is required. Set
-``MLFLOW_TRACKING_URI`` to point at a shared tracking server instead.
+``MLFLOW_TRACKING_URI`` to point at a shared tracking server instead, and
+``PROMOLIFT_EXPERIMENT_ROOT`` when that server needs experiment names to be
+workspace paths (Databricks, e.g. ``/Shared/promolift``).
 
 Callers log params/metrics/artifacts with the regular ``mlflow`` API inside
 ``start_run``; this module only owns configuration and lineage.
@@ -16,7 +18,7 @@ import platform
 import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path
 
@@ -36,6 +38,7 @@ from promolift.tracking.lineage import (
 logger = logging.getLogger(__name__)
 
 TRACKING_URI_ENV = "MLFLOW_TRACKING_URI"
+EXPERIMENT_ROOT_ENV = "PROMOLIFT_EXPERIMENT_ROOT"
 FINGERPRINT_ARTIFACT = "lineage/raw_data_fingerprint.json"
 
 
@@ -51,10 +54,19 @@ class TrackingConfig:
     """Where runs are recorded.
 
     ``artifact_root`` is None for remote servers, which own their artifact store.
+    ``experiment_root`` prefixes experiment names, for servers that require
+    them to be workspace paths (Databricks rejects bare names).
     """
 
     tracking_uri: str
     artifact_root: Path | None = None
+    experiment_root: str | None = None
+
+    def experiment_name(self, name: str) -> str:
+        """Full experiment name on this tracking server."""
+        if self.experiment_root is None:
+            return name
+        return f"{self.experiment_root.rstrip('/')}/{name}"
 
 
 def local_tracking_config(store_dir: Path) -> TrackingConfig:
@@ -73,21 +85,30 @@ def local_tracking_config(store_dir: Path) -> TrackingConfig:
 
 
 def default_tracking_config() -> TrackingConfig:
-    """``MLFLOW_TRACKING_URI`` if set, else the repository-local SQLite store."""
+    """``MLFLOW_TRACKING_URI`` if set, else the repository-local SQLite store.
+
+    ``PROMOLIFT_EXPERIMENT_ROOT``, if set, applies to either destination.
+    """
+    experiment_root = os.environ.get(EXPERIMENT_ROOT_ENV) or None
     uri = os.environ.get(TRACKING_URI_ENV)
     if uri:
-        return TrackingConfig(tracking_uri=uri)
-    return local_tracking_config(project_root() / "mlruns")
+        return TrackingConfig(tracking_uri=uri, experiment_root=experiment_root)
+    return replace(
+        local_tracking_config(project_root() / "mlruns"), experiment_root=experiment_root
+    )
 
 
 def _get_or_create_experiment(name: str, config: TrackingConfig) -> str:
-    existing = mlflow.get_experiment_by_name(name)
+    full_name = config.experiment_name(name)
+    existing = mlflow.get_experiment_by_name(full_name)
     if existing is not None:
         return existing.experiment_id
+    # Local artifact folders use the bare name: an absolute experiment root
+    # joined onto a Path would escape the store (e.g. to /Shared on disk).
     artifact_location = (
         (config.artifact_root / name).as_uri() if config.artifact_root is not None else None
     )
-    return mlflow.create_experiment(name, artifact_location=artifact_location)
+    return mlflow.create_experiment(full_name, artifact_location=artifact_location)
 
 
 @contextmanager

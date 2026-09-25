@@ -2,6 +2,7 @@
 
 import logging
 import subprocess
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -9,6 +10,7 @@ from mlflow import MlflowClient
 from mlflow.entities import RunStatus
 
 from promolift.tracking.mlflow_tracking import (
+    EXPERIMENT_ROOT_ENV,
     TRACKING_URI_ENV,
     TrackingConfig,
     default_tracking_config,
@@ -59,12 +61,38 @@ def test_default_tracking_config_honours_environment_override(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv(TRACKING_URI_ENV, "http://tracking.example.com")
+    monkeypatch.delenv(EXPERIMENT_ROOT_ENV, raising=False)
 
     config = default_tracking_config()
 
     assert config.tracking_uri == "http://tracking.example.com"
     # A remote server owns its artifact store; we must not impose a local path.
     assert config.artifact_root is None
+    assert config.experiment_root is None
+
+
+def test_default_tracking_config_reads_experiment_root(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(TRACKING_URI_ENV, "databricks://promolift")
+    monkeypatch.setenv(EXPERIMENT_ROOT_ENV, "/Shared/promolift")
+
+    assert default_tracking_config().experiment_root == "/Shared/promolift"
+
+
+@pytest.mark.parametrize("root", ["/Shared/promolift", "/Shared/promolift/"])
+def test_experiment_name_is_prefixed_with_experiment_root(root: str) -> None:
+    config = TrackingConfig(tracking_uri="databricks://promolift", experiment_root=root)
+
+    assert config.experiment_name("promolift-data-validation") == (
+        "/Shared/promolift/promolift-data-validation"
+    )
+
+
+def test_experiment_name_is_unchanged_without_experiment_root() -> None:
+    config = TrackingConfig(tracking_uri="sqlite:///mlflow.db")
+
+    assert config.experiment_name("promolift-data-validation") == "promolift-data-validation"
 
 
 def test_start_run_records_lineage_and_user_tags(
@@ -130,6 +158,23 @@ def test_start_run_writes_artifacts_under_store_not_working_directory(
     assert not (elsewhere / "mlruns").exists()
     assert config.artifact_root is not None
     assert Path(config.artifact_root).as_uri() in artifact_uri
+
+
+def test_start_run_keeps_local_artifacts_under_store_when_experiment_root_is_set(
+    config: TrackingConfig, clean_repo: Path, data_dir: Path
+) -> None:
+    # An absolute root like /Shared/promolift must only prefix the experiment
+    # name; joined onto a Path it would escape the store to /Shared on disk.
+    rooted = replace(config, experiment_root="/Shared/promolift")
+
+    with start_run("test-rooted", config=rooted, repo_dir=clean_repo, data_dir=data_dir) as run:
+        experiment_id = run.info.experiment_id
+        artifact_uri = run.info.artifact_uri
+
+    experiment = MlflowClient(tracking_uri=config.tracking_uri).get_experiment(experiment_id)
+    assert experiment.name == "/Shared/promolift/test-rooted"
+    assert config.artifact_root is not None
+    assert (config.artifact_root / "test-rooted").as_uri() in artifact_uri
 
 
 def test_start_run_warns_and_tags_when_tree_is_dirty(

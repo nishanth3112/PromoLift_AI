@@ -70,6 +70,37 @@ taken.
 To log to a shared tracking server instead, set `MLFLOW_TRACKING_URI` (e.g. in
 a gitignored `.env`); no code changes are needed.
 
+### Shared tracking on Databricks
+
+One-time setup per machine (macOS; Windows: `winget install Databricks.DatabricksCLI`):
+
+```bash
+brew tap databricks/tap
+brew trust --formula databricks/tap/databricks   # Homebrew 5 requires trusting third-party taps
+brew install databricks
+databricks auth login --host https://<workspace>.cloud.databricks.com --profile promolift
+```
+
+Use the workspace URL (`https://dbc-....cloud.databricks.com`), not the
+`accounts.cloud.databricks.com` account console. Then create `.env` in the
+repository root:
+
+```bash
+MLFLOW_TRACKING_URI=databricks://promolift
+PROMOLIFT_EXPERIMENT_ROOT=/Shared/promolift
+```
+
+Databricks requires experiment names to be workspace paths, so
+`PROMOLIFT_EXPERIMENT_ROOT` prefixes them (e.g.
+`/Shared/promolift/promolift-data-validation`). `.env` is only loaded when
+asked for, so plain `uv run` and CI keep using the local store:
+
+```bash
+uv run --env-file .env python scripts/log_data_validation.py
+```
+
+View runs under **Experiments** in the Databricks workspace.
+
 ## Status
 
 Under active development.
