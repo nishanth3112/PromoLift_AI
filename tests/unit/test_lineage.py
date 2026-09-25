@@ -79,11 +79,14 @@ def test_lockfile_sha256_is_none_when_missing(tmp_path: Path) -> None:
 
 
 def test_raw_data_fingerprint_records_present_and_missing_files(tmp_path: Path) -> None:
-    (tmp_path / "clients.csv").write_text("client_id\nc1\n")
+    # write_bytes, not write_text: text mode on Windows expands \n to \r\n,
+    # so the on-disk size would differ from len() of the string.
+    content = b"client_id\nc1\n"
+    (tmp_path / "clients.csv").write_bytes(content)
 
     by_name = {fp.filename: fp for fp in raw_data_fingerprint(tmp_path)}
 
-    assert by_name["clients.csv"].size_bytes == len("client_id\nc1\n")
+    assert by_name["clients.csv"].size_bytes == len(content)
     assert by_name["clients.csv"].modified_at is not None
     assert by_name["purchases.csv"].size_bytes is None
     assert by_name["purchases.csv"].modified_at is None
