@@ -17,6 +17,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
 
+      - name: Install libomp (macOS only, required by LightGBM)
+        if: runner.os == 'macOS'
+        run: brew install libomp
+
       - name: Install uv and Python
         uses: astral-sh/setup-uv@v10.2.0
         with:

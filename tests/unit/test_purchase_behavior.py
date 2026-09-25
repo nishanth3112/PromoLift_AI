@@ -104,3 +104,36 @@ def test_points_spent_total_sums_absolute_values(tmp_path: Path) -> None:
     result = build_purchase_behavior_features(datetime(2019, 1, 2), tmp_path).collect()
 
     assert result["points_spent_total"].to_list() == pytest.approx([35.0])
+
+
+def test_recent_frequency_and_monetary_only_count_transactions_in_the_window(
+    tmp_path: Path,
+) -> None:
+    # t1 is 60 days before reference (outside the 30-day window), t2 is 10
+    # days before (inside it).
+    (tmp_path / "purchases.csv").write_text(
+        "client_id,transaction_id,transaction_datetime,regular_points_received,"
+        "express_points_received,regular_points_spent,express_points_spent,purchase_sum\n"
+        "c1,t1,2019-01-01 00:00:00,0.0,0.0,0.0,0.0,100.0\n"
+        "c1,t2,2019-02-20 00:00:00,0.0,0.0,0.0,0.0,50.0\n"
+    )
+
+    result = build_purchase_behavior_features(datetime(2019, 3, 2), tmp_path).collect()
+
+    assert result["frequency"].to_list() == [2]
+    assert result["recent_frequency_30d"].to_list() == [1]
+    assert result["monetary_total"].to_list() == [150.0]
+    assert result["recent_monetary_30d"].to_list() == pytest.approx([50.0])
+
+
+def test_recent_frequency_is_zero_not_null_when_no_recent_activity(tmp_path: Path) -> None:
+    (tmp_path / "purchases.csv").write_text(
+        "client_id,transaction_id,transaction_datetime,regular_points_received,"
+        "express_points_received,regular_points_spent,express_points_spent,purchase_sum\n"
+        "c1,t1,2019-01-01 00:00:00,0.0,0.0,0.0,0.0,100.0\n"  # well outside the 30-day window
+    )
+
+    result = build_purchase_behavior_features(datetime(2019, 3, 2), tmp_path).collect()
+
+    assert result["recent_frequency_30d"].to_list() == [0]
+    assert result["recent_monetary_30d"].to_list() == pytest.approx([0.0])
