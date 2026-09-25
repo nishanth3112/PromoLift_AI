@@ -2,12 +2,14 @@
 
 from pathlib import Path
 
+import numpy as np
 import polars as pl
 import pytest
 
 from promolift.data.split import (
     Split,
     SplitIntegrityError,
+    generate_split,
     load_split,
     split_assignment_path,
     split_content_sha256,
@@ -159,3 +161,52 @@ def test_load_split_round_trips_content(tmp_path: Path) -> None:
 def test_load_split_explains_how_to_get_a_missing_file(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError, match="fetch_split"):
         load_split(split_assignment_path(tmp_path))
+
+
+def _random_labels(n: int = 1_000, seed: int = 0) -> pl.DataFrame:
+    rng = np.random.default_rng(seed)
+    return pl.DataFrame(
+        {
+            "client_id": [f"id{i:05d}" for i in range(n)],
+            "treatment_flg": rng.integers(0, 2, n),
+            # Unequal strata, like the real data (~62% conversion).
+            "target": (rng.random(n) < 0.62).astype(int),
+        }
+    )
+
+
+def test_generate_split_is_stratified_60_20_20_over_all_clients() -> None:
+    labels = _random_labels()
+
+    report = validate_split(generate_split(labels), labels)
+
+    assert report.n_clients == labels.height
+    assert report.matches_expected_fractions is True
+    # Tiny strata at n=1000 round to whole clients, so allow more slack than
+    # the production default tuned for 200k rows.
+    assert report.max_stratum_deviation < 0.01
+
+
+def test_generate_split_is_deterministic_for_a_seed() -> None:
+    labels = _random_labels()
+
+    assert split_content_sha256(generate_split(labels, seed=7)) == split_content_sha256(
+        generate_split(labels, seed=7)
+    )
+
+
+def test_generate_split_ignores_input_row_order() -> None:
+    labels = _random_labels()
+    shuffled = labels.sample(fraction=1.0, shuffle=True, seed=3)
+
+    assert split_content_sha256(generate_split(shuffled)) == split_content_sha256(
+        generate_split(labels)
+    )
+
+
+def test_generate_split_changes_with_seed() -> None:
+    labels = _random_labels()
+
+    assert split_content_sha256(generate_split(labels, seed=1)) != split_content_sha256(
+        generate_split(labels, seed=2)
+    )

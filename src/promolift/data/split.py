@@ -17,10 +17,12 @@ from enum import StrEnum
 from pathlib import Path
 
 import polars as pl
+from sklearn.model_selection import train_test_split
 
 from promolift.data.loader import project_root
 
 SPLIT_FILENAME = "split_assignment.parquet"
+DEFAULT_SEED = 42
 _STRATA = ("treatment_flg", "target")
 _DEFAULT_FRACTION_TOLERANCE = 0.01
 # Simulated on the real 200k uplift_train rows (20 seeds): stratified 60/20/20
@@ -148,6 +150,43 @@ def validate_split(
         matches_expected_fractions=max_fraction_deviation <= fraction_tolerance,
         is_stratified=max_stratum_deviation <= stratum_tolerance,
     )
+
+
+def generate_split(labels: pl.DataFrame, *, seed: int = DEFAULT_SEED) -> pl.DataFrame:
+    """Stratified 60/20/20 split on ``treatment_flg x target``.
+
+    Two chained ``train_test_split`` calls: train vs holdout, then the
+    holdout into val vs test, both stratified on the four treatment x outcome
+    strata so every split preserves the experiment's randomization and base
+    conversion rate. Input is sorted by ``client_id`` first, so the result
+    depends only on the set of clients and the seed, not on file row order.
+
+    Args:
+        labels: ``uplift_train`` rows (``client_id``, ``treatment_flg``, ``target``).
+        seed: Random seed for both splitting steps.
+
+    Returns:
+        One row per client with ``client_id`` and ``split``, sorted by ``client_id``.
+    """
+    ordered = labels.select("client_id", *_STRATA).sort("client_id")
+    client_ids = ordered["client_id"].to_numpy()
+    strata = (ordered["treatment_flg"] * 2 + ordered["target"]).to_numpy()
+
+    holdout_fraction = EXPECTED_FRACTIONS[Split.VAL] + EXPECTED_FRACTIONS[Split.TEST]
+    train_ids, holdout_ids, _, holdout_strata = train_test_split(
+        client_ids, strata, test_size=holdout_fraction, stratify=strata, random_state=seed
+    )
+    val_ids, test_ids = train_test_split(
+        holdout_ids,
+        test_size=EXPECTED_FRACTIONS[Split.TEST] / holdout_fraction,
+        stratify=holdout_strata,
+        random_state=seed,
+    )
+
+    return pl.concat(
+        pl.DataFrame({"client_id": ids, "split": split.value})
+        for ids, split in [(train_ids, Split.TRAIN), (val_ids, Split.VAL), (test_ids, Split.TEST)]
+    ).sort("client_id")
 
 
 def split_content_sha256(assignment: pl.DataFrame) -> str:
