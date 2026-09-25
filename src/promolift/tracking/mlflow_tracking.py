@@ -47,6 +47,7 @@ class Experiment(StrEnum):
     """One MLflow experiment per pipeline stage, so UI comparisons stay like-for-like."""
 
     DATA_VALIDATION = "promolift-data-validation"
+    DATA_SPLIT = "promolift-data-split"
     UPLIFT_MODELS = "promolift-uplift-models"
 
 
