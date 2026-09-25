@@ -4,14 +4,17 @@ import os
 import subprocess
 from pathlib import Path
 
+import polars as pl
 import pytest
 
+from promolift.data.split import split_assignment_path, split_content_sha256, write_split
 from promolift.tracking.lineage import (
     UNKNOWN,
     fingerprint_digest,
     git_state,
     lockfile_sha256,
     raw_data_fingerprint,
+    split_sha256,
 )
 
 _GIT_IDENTITY = ["-c", "user.name=test", "-c", "user.email=test@example.com"]
@@ -76,6 +79,17 @@ def test_lockfile_sha256_ignores_line_ending_differences(tmp_path: Path) -> None
 
 def test_lockfile_sha256_is_none_when_missing(tmp_path: Path) -> None:
     assert lockfile_sha256(tmp_path) is None
+
+
+def test_split_sha256_is_none_when_split_file_is_missing(tmp_path: Path) -> None:
+    assert split_sha256(tmp_path) is None
+
+
+def test_split_sha256_matches_content_hash_of_split_file(tmp_path: Path) -> None:
+    assignment = pl.DataFrame({"client_id": ["c2", "c1"], "split": ["val", "train"]})
+    write_split(assignment, split_assignment_path(tmp_path))
+
+    assert split_sha256(tmp_path) == split_content_sha256(assignment)
 
 
 def test_raw_data_fingerprint_records_present_and_missing_files(tmp_path: Path) -> None:

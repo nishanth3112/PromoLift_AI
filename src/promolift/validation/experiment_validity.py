@@ -8,6 +8,7 @@ any causal model is built on top of it.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from math import copysign, inf, sqrt
 from pathlib import Path
@@ -93,9 +94,16 @@ def numeric_covariate_balance(
     A well-randomized experiment should show |SMD| well under
     ``balance_threshold`` (0.1 is the common rule of thumb).
     """
+    return _numeric_balance(
+        _uplift_train_with_covariate(covariate, base_dir), covariate, balance_threshold
+    )
+
+
+def _numeric_balance(
+    lf: pl.LazyFrame, covariate: str, balance_threshold: float
+) -> NumericCovariateBalance:
     stats = (
-        _uplift_train_with_covariate(covariate, base_dir)
-        .group_by("treatment_flg")
+        lf.group_by("treatment_flg")
         .agg(pl.col(covariate).mean().alias("mean"), pl.col(covariate).var().alias("var"))
         .collect()
     )
@@ -128,12 +136,15 @@ def categorical_covariate_balance(
     balance_threshold: float = _DEFAULT_BALANCE_THRESHOLD,
 ) -> CategoricalCovariateBalance:
     """Per-category proportion difference of a categorical covariate across arms."""
-    counts = (
-        _uplift_train_with_covariate(covariate, base_dir)
-        .group_by(["treatment_flg", covariate])
-        .agg(pl.len().alias("count"))
-        .collect()
+    return _categorical_balance(
+        _uplift_train_with_covariate(covariate, base_dir), covariate, balance_threshold
     )
+
+
+def _categorical_balance(
+    lf: pl.LazyFrame, covariate: str, balance_threshold: float
+) -> CategoricalCovariateBalance:
+    counts = lf.group_by(["treatment_flg", covariate]).agg(pl.len().alias("count")).collect()
     totals = counts.group_by("treatment_flg").agg(pl.col("count").sum().alias("total"))
     proportions = counts.join(totals, on="treatment_flg").with_columns(
         (pl.col("count") / pl.col("total")).alias("proportion")
@@ -191,9 +202,12 @@ def raw_ate_sanity_check(
     the randomized experiment shows a plausible, non-degenerate treatment
     effect before any causal model is built on top of it.
     """
+    return _ate(load_lazy(Dataset.UPLIFT_TRAIN, base_dir), confidence)
+
+
+def _ate(lf: pl.LazyFrame, confidence: float) -> ATESanityCheckReport:
     stats = (
-        load_lazy(Dataset.UPLIFT_TRAIN, base_dir)
-        .group_by("treatment_flg")
+        lf.group_by("treatment_flg")
         .agg(pl.col("target").mean().alias("rate"), pl.len().alias("count"))
         .collect()
     )
@@ -218,6 +232,55 @@ def raw_ate_sanity_check(
         treatment_count=treatment["count"],
         control_count=control["count"],
     )
+
+
+@dataclass
+class SplitRandomizationReport:
+    """Randomization evidence within one split of the experiment."""
+
+    split: str
+    ate: ATESanityCheckReport
+    numeric_balance: list[NumericCovariateBalance]
+    categorical_balance: list[CategoricalCovariateBalance]
+    is_balanced: bool
+
+
+def split_randomization_check(
+    frame: pl.DataFrame,
+    *,
+    numeric_covariates: Sequence[str] = ("age",),
+    categorical_covariates: Sequence[str] = ("gender",),
+    confidence: float = 0.95,
+    balance_threshold: float = _DEFAULT_BALANCE_THRESHOLD,
+) -> list[SplitRandomizationReport]:
+    """Check that randomization holds within every split, not just overall.
+
+    A split can be stratified on treatment x outcome yet still, by chance,
+    concentrate e.g. older treated clients in one split. Each split's ATE
+    confidence interval is also the noise scale that model comparisons on
+    that split have to beat.
+
+    Args:
+        frame: One row per client with ``split``, ``treatment_flg``,
+            ``target``, and the covariate columns.
+    """
+    reports = []
+    for split in frame["split"].unique(maintain_order=True):
+        lf = frame.filter(pl.col("split") == split).lazy()
+        numeric = [_numeric_balance(lf, c, balance_threshold) for c in numeric_covariates]
+        categorical = [
+            _categorical_balance(lf, c, balance_threshold) for c in categorical_covariates
+        ]
+        reports.append(
+            SplitRandomizationReport(
+                split=split,
+                ate=_ate(lf, confidence),
+                numeric_balance=numeric,
+                categorical_balance=categorical,
+                is_balanced=all(b.is_balanced for b in [*numeric, *categorical]),
+            )
+        )
+    return reports
 
 
 @dataclass

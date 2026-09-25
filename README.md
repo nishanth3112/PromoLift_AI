@@ -101,6 +101,28 @@ uv run --env-file .env python scripts/log_data_validation.py
 
 View runs under **Experiments** in the Databricks workspace.
 
+## Train/validation/test split
+
+Every model is trained and evaluated on one canonical client-level split of
+`uplift_train`: stratified 60/20/20 on `treatment_flg × target`, seed 42,
+stored at `data/processed/split_assignment.parquet` (gitignored). The shared
+tracking server holds the canonical copy, and every MLflow run is tagged with
+the `split_sha256` it used. **The test split is locked** — never used for
+model selection or tuning, only for the final evaluation.
+
+Get the split on a new machine (verifies the download against its recorded hash):
+
+```bash
+uv run --env-file .env python scripts/fetch_split.py
+```
+
+Creating it (done once; refuses to replace an existing split without `--force`,
+which would invalidate every result evaluated on the old one):
+
+```bash
+uv run --env-file .env python scripts/make_split.py
+```
+
 ## Status
 
 Under active development.

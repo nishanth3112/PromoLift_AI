@@ -33,6 +33,7 @@ from promolift.tracking.lineage import (
     git_state,
     lockfile_sha256,
     raw_data_fingerprint,
+    split_sha256,
 )
 
 logger = logging.getLogger(__name__)
@@ -46,6 +47,7 @@ class Experiment(StrEnum):
     """One MLflow experiment per pipeline stage, so UI comparisons stay like-for-like."""
 
     DATA_VALIDATION = "promolift-data-validation"
+    DATA_SPLIT = "promolift-data-split"
     UPLIFT_MODELS = "promolift-uplift-models"
 
 
@@ -120,6 +122,7 @@ def start_run(
     config: TrackingConfig | None = None,
     repo_dir: Path | None = None,
     data_dir: Path | None = None,
+    processed_dir: Path | None = None,
 ) -> Iterator[ActiveRun]:
     """Start an MLflow run tagged with code, environment, and raw-data lineage.
 
@@ -135,6 +138,7 @@ def start_run(
         config: Tracking destination; defaults to ``default_tracking_config()``.
         repo_dir: Repository to read git/lockfile state from (for tests).
         data_dir: Raw data directory to fingerprint (for tests).
+        processed_dir: Directory holding the split file to hash (for tests).
     """
     config = config if config is not None else default_tracking_config()
     mlflow.set_tracking_uri(config.tracking_uri)
@@ -153,6 +157,7 @@ def start_run(
         "git_dirty": UNKNOWN if git.is_dirty is None else str(git.is_dirty).lower(),
         "uv_lock_sha256": lockfile_sha256(repo_dir) or UNKNOWN,
         "raw_data_digest": fingerprint_digest(fingerprints),
+        "split_sha256": split_sha256(processed_dir) or "missing",
         "python_version": platform.python_version(),
         "platform": f"{sys.platform}-{platform.machine()}",
     }
