@@ -1,9 +1,10 @@
 """Reproducibility lineage recorded on every tracked run: code, environment, and data.
 
 Deliberately cheap to compute so it can run on every run: git state via the
-``git`` CLI, a hash of ``uv.lock``, and a size/mtime fingerprint of the raw X5
+``git`` CLI, a hash of ``uv.lock``, a size/mtime fingerprint of the raw X5
 files instead of a content hash (hashing ~4.3 GB would add tens of seconds to
-every run, and raw data is read-only by project rule).
+every run, and raw data is read-only by project rule), and a content hash of
+the small persisted train/val/test split.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from promolift.data.loader import Dataset, path_for, project_root
+from promolift.data.split import load_split, split_assignment_path, split_content_sha256
 
 UNKNOWN = "unknown"
 
@@ -65,6 +67,14 @@ def lockfile_sha256(repo_dir: Path | None = None) -> str | None:
     # Normalize line endings so a Windows checkout (core.autocrlf) of the same
     # lockfile hashes identically to the macOS/Linux one.
     return hashlib.sha256(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
+
+
+def split_sha256(processed_dir: Path | None = None) -> str | None:
+    """Content hash of the persisted train/val/test split, or None if it doesn't exist."""
+    path = split_assignment_path(processed_dir)
+    if not path.exists():
+        return None
+    return split_content_sha256(load_split(path))
 
 
 def raw_data_fingerprint(base_dir: Path | None = None) -> list[RawFileFingerprint]:

@@ -5,10 +5,12 @@ import subprocess
 from dataclasses import replace
 from pathlib import Path
 
+import polars as pl
 import pytest
 from mlflow import MlflowClient
 from mlflow.entities import RunStatus
 
+from promolift.data.split import split_assignment_path, split_content_sha256, write_split
 from promolift.tracking.mlflow_tracking import (
     EXPERIMENT_ROOT_ENV,
     TRACKING_URI_ENV,
@@ -45,6 +47,17 @@ def data_dir(tmp_path: Path) -> Path:
     raw.mkdir()
     (raw / "uplift_train.csv").write_text("client_id,treatment_flg,target\nc1,1,0\n")
     return raw
+
+
+@pytest.fixture
+def lineage_dirs(clean_repo: Path, data_dir: Path, tmp_path: Path) -> dict[str, Path]:
+    # Every lineage source points at a temp dir, so no test reads the real
+    # repository, raw data, or split file.
+    return {
+        "repo_dir": clean_repo,
+        "data_dir": data_dir,
+        "processed_dir": tmp_path / "processed",
+    }
 
 
 def test_local_tracking_config_uses_sqlite_inside_store_dir(tmp_path: Path) -> None:
@@ -96,15 +109,14 @@ def test_experiment_name_is_unchanged_without_experiment_root() -> None:
 
 
 def test_start_run_records_lineage_and_user_tags(
-    config: TrackingConfig, clean_repo: Path, data_dir: Path
+    config: TrackingConfig, lineage_dirs: dict[str, Path]
 ) -> None:
     with start_run(
         "test-lineage",
         run_name="smoke",
         tags={"stage": "unit-test"},
         config=config,
-        repo_dir=clean_repo,
-        data_dir=data_dir,
+        **lineage_dirs,
     ) as run:
         run_id = run.info.run_id
 
@@ -121,15 +133,37 @@ def test_start_run_records_lineage_and_user_tags(
     assert artifacts == ["lineage/raw_data_fingerprint.json"]
 
 
+def test_start_run_tags_split_as_missing_when_no_split_file(
+    config: TrackingConfig, lineage_dirs: dict[str, Path]
+) -> None:
+    with start_run("test-split-missing", config=config, **lineage_dirs) as run:
+        run_id = run.info.run_id
+
+    tags = MlflowClient(tracking_uri=config.tracking_uri).get_run(run_id).data.tags
+    assert tags["split_sha256"] == "missing"
+
+
+def test_start_run_tags_split_content_hash(
+    config: TrackingConfig, lineage_dirs: dict[str, Path]
+) -> None:
+    assignment = pl.DataFrame({"client_id": ["c2", "c1"], "split": ["train", "test"]})
+    write_split(assignment, split_assignment_path(lineage_dirs["processed_dir"]))
+
+    with start_run("test-split-present", config=config, **lineage_dirs) as run:
+        run_id = run.info.run_id
+
+    tags = MlflowClient(tracking_uri=config.tracking_uri).get_run(run_id).data.tags
+    assert tags["split_sha256"] == split_content_sha256(assignment)
+
+
 def test_user_tags_cannot_overwrite_lineage(
-    config: TrackingConfig, clean_repo: Path, data_dir: Path
+    config: TrackingConfig, lineage_dirs: dict[str, Path]
 ) -> None:
     with start_run(
         "test-lineage-precedence",
         tags={"git_commit": "forged"},
         config=config,
-        repo_dir=clean_repo,
-        data_dir=data_dir,
+        **lineage_dirs,
     ) as run:
         run_id = run.info.run_id
 
@@ -139,8 +173,7 @@ def test_user_tags_cannot_overwrite_lineage(
 
 def test_start_run_writes_artifacts_under_store_not_working_directory(
     config: TrackingConfig,
-    clean_repo: Path,
-    data_dir: Path,
+    lineage_dirs: dict[str, Path],
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -150,9 +183,7 @@ def test_start_run_writes_artifacts_under_store_not_working_directory(
     elsewhere.mkdir()
     monkeypatch.chdir(elsewhere)
 
-    with start_run(
-        "test-artifact-location", config=config, repo_dir=clean_repo, data_dir=data_dir
-    ) as run:
+    with start_run("test-artifact-location", config=config, **lineage_dirs) as run:
         artifact_uri = run.info.artifact_uri
 
     assert not (elsewhere / "mlruns").exists()
@@ -161,13 +192,13 @@ def test_start_run_writes_artifacts_under_store_not_working_directory(
 
 
 def test_start_run_keeps_local_artifacts_under_store_when_experiment_root_is_set(
-    config: TrackingConfig, clean_repo: Path, data_dir: Path
+    config: TrackingConfig, lineage_dirs: dict[str, Path]
 ) -> None:
     # An absolute root like /Shared/promolift must only prefix the experiment
     # name; joined onto a Path it would escape the store to /Shared on disk.
     rooted = replace(config, experiment_root="/Shared/promolift")
 
-    with start_run("test-rooted", config=rooted, repo_dir=clean_repo, data_dir=data_dir) as run:
+    with start_run("test-rooted", config=rooted, **lineage_dirs) as run:
         experiment_id = run.info.experiment_id
         artifact_uri = run.info.artifact_uri
 
@@ -180,14 +211,14 @@ def test_start_run_keeps_local_artifacts_under_store_when_experiment_root_is_set
 def test_start_run_warns_and_tags_when_tree_is_dirty(
     config: TrackingConfig,
     clean_repo: Path,
-    data_dir: Path,
+    lineage_dirs: dict[str, Path],
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     (clean_repo / "uv.lock").write_text("version = 2\n")
 
     with (
         caplog.at_level(logging.WARNING, logger="promolift.tracking.mlflow_tracking"),
-        start_run("test-dirty", config=config, repo_dir=clean_repo, data_dir=data_dir) as run,
+        start_run("test-dirty", config=config, **lineage_dirs) as run,
     ):
         run_id = run.info.run_id
 
@@ -197,12 +228,12 @@ def test_start_run_warns_and_tags_when_tree_is_dirty(
 
 
 def test_start_run_marks_run_failed_on_exception(
-    config: TrackingConfig, clean_repo: Path, data_dir: Path
+    config: TrackingConfig, lineage_dirs: dict[str, Path]
 ) -> None:
     run_id = None
     with (
         pytest.raises(RuntimeError),
-        start_run("test-failure", config=config, repo_dir=clean_repo, data_dir=data_dir) as run,
+        start_run("test-failure", config=config, **lineage_dirs) as run,
     ):
         run_id = run.info.run_id
         raise RuntimeError("boom")
@@ -212,11 +243,11 @@ def test_start_run_marks_run_failed_on_exception(
 
 
 def test_start_run_reuses_existing_experiment(
-    config: TrackingConfig, clean_repo: Path, data_dir: Path
+    config: TrackingConfig, lineage_dirs: dict[str, Path]
 ) -> None:
     experiment_ids = []
     for _ in range(2):
-        with start_run("test-reuse", config=config, repo_dir=clean_repo, data_dir=data_dir) as run:
+        with start_run("test-reuse", config=config, **lineage_dirs) as run:
             experiment_ids.append(run.info.experiment_id)
 
     assert experiment_ids[0] == experiment_ids[1]
