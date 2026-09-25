@@ -42,6 +42,34 @@ Verify the causal-ML stack (imports, plus tiny mini-fits with `--fit`):
 uv run python scripts/check_env.py --fit
 ```
 
+## Experiment tracking
+
+Runs are tracked with MLflow in a local SQLite store at `mlruns/mlflow.db`
+(gitignored) — no MLflow server or account is needed. Use
+`promolift.tracking.mlflow_tracking.start_run`, which pins artifacts to
+`mlruns/artifacts/` regardless of working directory and tags every run with
+its git commit, a `git_dirty` flag, the `uv.lock` hash, and a raw-data
+fingerprint. Filter out `git_dirty=true` runs before choosing a final model.
+
+Log the experiment-validity baseline (needs the raw data):
+
+```bash
+uv run python scripts/log_data_validation.py
+```
+
+Browse runs from the repository root:
+
+```bash
+uv run mlflow ui --backend-store-uri sqlite:///mlruns/mlflow.db
+```
+
+Open http://127.0.0.1:5000 — not `localhost:5000`, which on macOS can hit the
+AirPlay Receiver on the same port and return 403. Add `--port 5001` if 5000 is
+taken.
+
+To log to a shared tracking server instead, set `MLFLOW_TRACKING_URI` (e.g. in
+a gitignored `.env`); no code changes are needed.
+
 ## Status
 
 Under active development.
