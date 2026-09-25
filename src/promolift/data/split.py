@@ -46,6 +46,34 @@ class SplitIntegrityError(ValueError):
     """The assignment is structurally unusable (wrong clients, duplicates, bad labels)."""
 
 
+class LockedSplitError(RuntimeError):
+    """The test split was requested outside the final evaluation."""
+
+
+def assert_split_access(split: Split | str, *, final_evaluation: bool = False) -> None:
+    """Refuse access to the locked test split unless this is the final evaluation.
+
+    Looking at test metrics while choosing or tuning models leaks the test
+    set into model selection and biases the final estimate upward; this turns
+    that mistake into an error instead of a silent leak.
+
+    Raises:
+        ValueError: If ``split`` isn't a known split name.
+        LockedSplitError: If ``split`` is test and ``final_evaluation`` is False.
+    """
+    try:
+        split = Split(split)
+    except ValueError:
+        msg = f"Unknown split {split!r}; expected one of {[s.value for s in Split]}"
+        raise ValueError(msg) from None
+    if split is Split.TEST and not final_evaluation:
+        msg = (
+            "The test split is locked until the final evaluation; pass "
+            "final_evaluation=True only for that one-time evaluation."
+        )
+        raise LockedSplitError(msg)
+
+
 @dataclass
 class SplitValidationReport:
     """Size and stratification of a structurally valid split."""

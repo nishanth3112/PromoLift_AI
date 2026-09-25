@@ -25,4 +25,10 @@ CI must not require raw data, AWS credentials, secrets, or external services.
 
 ## Scope
 
-Current work focuses on ingestion, validation, and data auditing. Do not implement causal models, feature engineering, AWS deployment, optimization, or monitoring unless explicitly requested. Preserve existing configuration, inspect before modifying, and never commit or push automatically.
+Done: ingestion, validation, data auditing, feature engineering, experiment tracking (MLflow: local SQLite or Databricks), and the canonical train/val/test split.
+
+Current work: uplift evaluation (ranking metrics, uncertainty, noise floor), then baseline and causal uplift models.
+
+The test split is locked: never use it for model selection or tuning -- only for the final evaluation.
+
+Do not implement AWS deployment, budget optimization, or monitoring unless explicitly requested. Preserve existing configuration, inspect before modifying, and never commit or push automatically.

@@ -22,7 +22,9 @@ dependencies = [
     "polars>=1.44.2",
     "pyarrow>=25.0.1",
     "pyyaml>=6.0.3",
-    "scikit-learn>=1.9.1",
+    # <1.10: scikit-uplift 0.5.1 calls sklearn.utils.extmath.stable_cumsum,
+    # deprecated in 1.8 and removed in 1.10 -- every uplift metric would break.
+    "scikit-learn>=1.9.1,<1.10",
     "scikit-uplift>=0.5.1",
     "seaborn>=0.13.2",
     "shap>=0.52.0",
@@ -72,3 +74,7 @@ markers = [
     "integration: requires the real local X5 dataset; excluded from CI by default",
 ]
 addopts = "-m 'not integration'"
+filterwarnings = [
+    # Known and pinned against (see scikit-learn bound above); not actionable here.
+    "ignore:Function stable_cumsum is deprecated:FutureWarning",
+]
