@@ -18,7 +18,13 @@ from dataclasses import dataclass
 import numpy as np
 import polars as pl
 from numpy.typing import ArrayLike
-from sklift.metrics import qini_auc_score, uplift_at_k, uplift_auc_score, uplift_by_percentile
+from sklift.metrics import (
+    qini_auc_score,
+    qini_curve,
+    uplift_at_k,
+    uplift_auc_score,
+    uplift_by_percentile,
+)
 
 DEFAULT_K_GRID = (0.1, 0.2, 0.3, 0.5)
 # "overall" ranks the whole population and takes its top k%, which is what a
@@ -87,6 +93,34 @@ def ranking_metrics(
         qini_auc=float(qini_auc_score(y, s, t)),
         uplift_auc=float(uplift_auc_score(y, s, t)),
         uplift_at_k={k: float(uplift_at_k(y, s, t, strategy=_STRATEGY, k=k)) for k in k_grid},
+    )
+
+
+@dataclass
+class QiniCurve:
+    """Cumulative incremental conversions as the targeted share of clients grows."""
+
+    fraction_targeted: np.ndarray
+    incremental_conversions: np.ndarray
+
+
+def qini_curve_points(
+    scores: ArrayLike, treatment: ArrayLike, outcome: ArrayLike, *, max_points: int = 201
+) -> QiniCurve:
+    """The Qini curve from 0% to 100% targeted, downsampled to at most ``max_points``.
+
+    Downsampling keeps reports and plots small (the raw curve has a point per
+    client) without changing the curve's shape at plotting resolution.
+    """
+    s, t, y = _validated(scores, treatment, outcome)
+    n_targeted, incremental = qini_curve(y, s, t)
+    if n_targeted[0] != 0:
+        n_targeted, incremental = np.r_[0, n_targeted], np.r_[0.0, incremental]
+    keep = np.unique(np.linspace(0, len(n_targeted) - 1, min(len(n_targeted), max_points)).round())
+    keep = keep.astype(int)
+    return QiniCurve(
+        fraction_targeted=n_targeted[keep] / n_targeted[-1],
+        incremental_conversions=np.asarray(incremental[keep], dtype=float),
     )
 
 

@@ -60,6 +60,7 @@ class NoiseFloor:
     """Distribution of each metric under random rankings: median and central range."""
 
     n_rankings: int
+    n_clients: int
     confidence: float
     qini_auc: Interval
     uplift_auc: Interval
@@ -182,7 +183,10 @@ def random_ranking_noise_floor(
         for m, lo, hi in zip(median, lower, upper, strict=True)
     ]
     return NoiseFloor(
-        n_rankings=n_rankings, confidence=confidence, **_split_by_metric(intervals, k_grid)
+        n_rankings=n_rankings,
+        n_clients=len(t),
+        confidence=confidence,
+        **_split_by_metric(intervals, k_grid),
     )
 
 
