@@ -26,6 +26,11 @@ DEFAULT_K_GRID = (0.1, 0.2, 0.3, 0.5)
 _STRATEGY = "overall"
 
 
+def uplift_at_k_name(k: float) -> str:
+    """Flat metric name for uplift at targeting depth ``k``, e.g. 0.3 -> ``uplift_at_30pct``."""
+    return f"uplift_at_{round(k * 100)}pct"
+
+
 @dataclass
 class RankingMetrics:
     """Point estimates of ranking quality for one score on one set of clients."""
@@ -34,6 +39,14 @@ class RankingMetrics:
     qini_auc: float
     uplift_auc: float
     uplift_at_k: dict[float, float]
+
+    def as_flat_dict(self) -> dict[str, float]:
+        """All metrics under flat names, e.g. for comparison or MLflow logging."""
+        return {
+            "qini_auc": self.qini_auc,
+            "uplift_auc": self.uplift_auc,
+            **{uplift_at_k_name(k): v for k, v in self.uplift_at_k.items()},
+        }
 
 
 def _validated(
