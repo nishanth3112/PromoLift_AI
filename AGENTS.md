@@ -1,28 +1,34 @@
 # AGENTS.md
 
-## Project
+## Overview
 
-PromoLift AI is a production-grade causal ML platform for retail promotion incrementality and campaign budget optimization. It uses the X5 RetailHero uplift dataset to estimate customer-level treatment effects and ultimately identify customers whose purchasing behavior is changed by promotions.
+PromoLift AI is a causal ML platform for retail promotion incrementality. It estimates customer-level uplift on the X5 RetailHero dataset to target customers whose purchases an SMS promotion changes.
 
-## Engineering Rules
+## Tooling
 
-Use Python 3.12 and `uv` for environments, dependencies, and reproducibility. Keep reusable production logic under `src/promolift/`; notebooks are for exploration and reporting only. Use type hints, concise docstrings, small testable functions, and `pathlib` for paths. Avoid premature abstractions and unnecessary dependencies.
+- Python 3.12 and dependencies: `uv`
+- Data processing: Polars, lazy by default
+- Formatting/linting: Ruff
+- Tests: pytest
+- Tracking: MLflow (local SQLite; Databricks via `.env`)
 
-Raw X5 files live under `data/raw/` and MUST NEVER be committed, modified, or deleted by agents. Never hardcode local absolute paths. `purchases.csv` is approximately 4.2 GB; never load it blindly into Pandas. Prefer Polars lazy operations (`scan_csv`) and memory-efficient processing.
+## Verification
 
-## Quality
+- `uv sync`
+- `uv run ruff format --check .`
+- `uv run ruff check .`
+- `uv run pytest`: excludes `integration` tests, which need real data
 
-Use `pytest` for testing and Ruff for linting/formatting. Unit tests must be deterministic, fast, and independent of the real dataset. Use temporary synthetic fixtures. Real-data integration tests must be optional and excluded from CI.
+Run all before completion; CI runs them on macOS, Linux, and Windows.
 
-Run before completion:
+## Development Rules
 
-`uv sync`
-`uv run ruff format --check .`
-`uv run ruff check .`
-`uv run pytest`
+Keep reusable logic in `src/promolift/`; notebooks and `scripts/` only orchestrate. Use type hints, `pathlib`, and small testable functions; avoid premature abstractions and new dependencies; never hardcode absolute paths. Never commit, modify, or delete raw files in `data/raw/`. `purchases.csv` is ~4.2 GB: use the lazy loaders in `promolift.data.loader`, never eager reads. Inspect before modifying, preserve existing configuration, and never commit or push automatically.
 
-CI must not require raw data, AWS credentials, secrets, or external services.
+## Architecture
 
-## Scope
+`data/` owns loading and the canonical split, `validation/` data and experiment checks, `features/` leakage-free client features, `evaluation/` uplift metrics, and `tracking/` MLflow configuration and lineage. Start runs with `tracking.mlflow_tracking.start_run`, not bare `mlflow`. The test split is locked: use it only for the final evaluation, never for model selection or tuning.
 
-Current work focuses on ingestion, validation, and data auditing. Do not implement causal models, feature engineering, AWS deployment, optimization, or monitoring unless explicitly requested. Preserve existing configuration, inspect before modifying, and never commit or push automatically.
+## Definition of Done
+
+Add deterministic tests on synthetic temp fixtures. Keep CI free of raw data, credentials, and external services. Document new configuration and scripts in the README. Don't implement deployment, budget optimization, or monitoring unless asked. Never commit `.env`, credentials, data, or `mlruns/`.

@@ -7,8 +7,10 @@ import polars as pl
 import pytest
 
 from promolift.data.split import (
+    LockedSplitError,
     Split,
     SplitIntegrityError,
+    assert_split_access,
     generate_split,
     load_split,
     split_assignment_path,
@@ -210,3 +212,22 @@ def test_generate_split_changes_with_seed() -> None:
     assert split_content_sha256(generate_split(labels, seed=1)) != split_content_sha256(
         generate_split(labels, seed=2)
     )
+
+
+def test_train_and_val_are_always_accessible() -> None:
+    assert_split_access(Split.TRAIN)
+    assert_split_access("val")
+
+
+def test_test_split_is_locked_by_default() -> None:
+    with pytest.raises(LockedSplitError, match="final_evaluation"):
+        assert_split_access(Split.TEST)
+
+
+def test_test_split_opens_only_for_final_evaluation() -> None:
+    assert_split_access(Split.TEST, final_evaluation=True)
+
+
+def test_unknown_split_names_are_rejected() -> None:
+    with pytest.raises(ValueError, match="valid"):
+        assert_split_access("valid")

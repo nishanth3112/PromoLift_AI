@@ -2168,7 +2168,7 @@ requires-dist = [
     { name = "polars", specifier = ">=1.44.2" },
     { name = "pyarrow", specifier = ">=25.0.1" },
     { name = "pyyaml", specifier = ">=6.0.3" },
-    { name = "scikit-learn", specifier = ">=1.9.1" },
+    { name = "scikit-learn", specifier = ">=1.9.1,<1.10" },
     { name = "scikit-uplift", specifier = ">=0.5.1" },
     { name = "seaborn", specifier = ">=0.13.2" },
     { name = "shap", specifier = ">=0.52.0" },

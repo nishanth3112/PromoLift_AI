@@ -123,6 +123,18 @@ which would invalidate every result evaluated on the old one):
 uv run --env-file .env python scripts/make_split.py
 ```
 
+## Evaluation
+
+`promolift.evaluation.report.evaluate_ranking` is the one way to judge a model's
+uplift scores on a split: normalized Qini AUC (primary model-selection metric),
+uplift AUC, uplift at 10/20/30/50% targeted, stratified-bootstrap CIs, a
+random-ranking noise floor, deciles, and the Qini curve. `log_evaluation` logs
+it to the active MLflow run with split-prefixed names (`val_qini_auc`) and
+Qini/decile plots. Compute the noise floor once per split with
+`random_ranking_noise_floor` and pass it to every model's evaluation; compare two
+models with `uncertainty.paired_comparison`. Evaluating on `test` raises unless
+`final_evaluation=True`.
+
 ## Status
 
 Under active development.
