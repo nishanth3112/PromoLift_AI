@@ -69,8 +69,11 @@ htmlcov/
 # ==========================================
 # ML ARTIFACTS
 # ==========================================
-models/
-artifacts/
+# Anchored to the repo root: an unanchored "models/" also matched the
+# src/promolift/models/ source package.
+/models/
+/artifacts/
+# Unanchored on purpose: MLflow can create mlruns/ in any working directory.
 mlruns/
 
 
