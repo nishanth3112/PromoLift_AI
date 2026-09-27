@@ -150,6 +150,10 @@ uv run --env-file .env python scripts/train_baselines.py            # ~8-9 min
 uv run --env-file .env python scripts/train_baselines.py --n-bootstrap 200   # quick look
 ```
 
+Results: [docs/baseline_results.md](docs/baseline_results.md) — the response
+model is worse than random targeting; the three uplift baselines beat it
+decisively and are statistically tied with each other.
+
 Models aren't stored: every run is reproducible from its commit, split hash,
 and seed. The test split can't be loaded for training or evaluation outside
 the final evaluation.
