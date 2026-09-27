@@ -135,6 +135,25 @@ Qini/decile plots. Compute the noise floor once per split with
 models with `uncertainty.paired_comparison`. Evaluating on `test` raises unless
 `final_evaluation=True`.
 
+## Baseline models
+
+Models implement `promolift.models.base.UpliftModel` and are built by name via
+`promolift.models.registry.build_model`: `random` (sanity floor), `response`
+(P(buy | contacted), trained on treated clients — the traditional approach),
+and the scikit-uplift `s_learner`, `t_learner`, `class_transformation`, all on
+one shared LightGBM configuration. Train all of them on the canonical split and
+log a validation leaderboard (per-model runs plus a `leaderboard` run with
+overlaid Qini curves and paired comparisons):
+
+```bash
+uv run --env-file .env python scripts/train_baselines.py            # ~8-9 min
+uv run --env-file .env python scripts/train_baselines.py --n-bootstrap 200   # quick look
+```
+
+Models aren't stored: every run is reproducible from its commit, split hash,
+and seed. The test split can't be loaded for training or evaluation outside
+the final evaluation.
+
 ## Status
 
 Under active development.
