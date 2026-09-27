@@ -48,6 +48,7 @@ class Experiment(StrEnum):
 
     DATA_VALIDATION = "promolift-data-validation"
     DATA_SPLIT = "promolift-data-split"
+    MODEL_TUNING = "promolift-model-tuning"
     UPLIFT_MODELS = "promolift-uplift-models"
 
 

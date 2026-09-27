@@ -55,3 +55,15 @@ def test_params_describe_forest_settings_for_logging() -> None:
     assert params["model"] == "causal_forest"
     assert params["seed"] == 5
     assert "forest_n_estimators" in params
+
+
+def test_forest_overrides_apply_to_the_forest() -> None:
+    params = build_model("uplift_rf", overrides={"max_depth": 6}).params()
+
+    assert params["forest_max_depth"] == 6
+    assert params["forest_min_samples_leaf"] == 200
+
+
+def test_forest_overrides_reject_lightgbm_keys() -> None:
+    with pytest.raises(ValueError, match="learning_rate"):
+        build_model("causal_forest", overrides={"learning_rate": 0.1})

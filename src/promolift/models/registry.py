@@ -10,7 +10,7 @@ from promolift.models.advanced import (
     UpliftRandomForestModel,
     XLearnerModel,
 )
-from promolift.models.base import UpliftModel
+from promolift.models.base import Params, UpliftModel
 from promolift.models.baselines import (
     ClassTransformationModel,
     RandomModel,
@@ -21,7 +21,7 @@ from promolift.models.baselines import (
 
 DEFAULT_SEED = 42
 
-_REGISTRY: dict[str, Callable[[int], UpliftModel]] = {
+_REGISTRY: dict[str, Callable[[int, Params | None], UpliftModel]] = {
     model.name: model
     for model in (
         RandomModel,
@@ -42,12 +42,15 @@ def available_models() -> list[str]:
     return list(_REGISTRY)
 
 
-def build_model(name: str, *, seed: int = DEFAULT_SEED) -> UpliftModel:
-    """A fresh, unfitted model.
+def build_model(
+    name: str, *, seed: int = DEFAULT_SEED, overrides: Params | None = None
+) -> UpliftModel:
+    """A fresh, unfitted model, optionally with overridden (e.g. tuned) hyperparameters.
 
     Raises:
-        ValueError: If ``name`` isn't registered.
+        ValueError: If ``name`` isn't registered, or ``overrides`` has keys the
+            model doesn't use.
     """
     if name not in _REGISTRY:
         raise ValueError(f"Unknown model {name!r}; available: {available_models()}")
-    return _REGISTRY[name](seed)
+    return _REGISTRY[name](seed, overrides)

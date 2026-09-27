@@ -77,3 +77,21 @@ def test_params_describe_the_model_for_logging() -> None:
     assert params["model"] == "s_learner"
     assert params["seed"] == 7
     assert "lgbm_n_estimators" in params
+
+
+def test_overrides_replace_the_shared_lightgbm_defaults() -> None:
+    params = build_model("t_learner", overrides={"num_leaves": 7, "reg_lambda": 1.5}).params()
+
+    assert params["lgbm_num_leaves"] == 7
+    assert params["lgbm_reg_lambda"] == 1.5
+    assert params["lgbm_n_estimators"] == 300  # untouched default
+
+
+def test_misspelled_overrides_are_rejected_not_ignored() -> None:
+    with pytest.raises(ValueError, match="num_leafs"):
+        build_model("s_learner", overrides={"num_leafs": 7})
+
+
+def test_random_model_takes_no_hyperparameters() -> None:
+    with pytest.raises(ValueError, match="Unknown parameter"):
+        build_model("random", overrides={"num_leaves": 7})

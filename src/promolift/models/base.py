@@ -26,6 +26,28 @@ LGBM_PARAMS: dict[str, float | int | bool] = {
 }
 
 
+# Tunable beyond the defaults above (L1/L2 regularization start at LightGBM's 0).
+_EXTRA_LGBM_KEYS = frozenset({"reg_alpha", "reg_lambda"})
+LGBM_TUNABLE_KEYS = frozenset(LGBM_PARAMS) | _EXTRA_LGBM_KEYS
+
+Params = dict[str, float | int | bool | str | None]
+
+
+def merge_params(defaults: Params, overrides: Params | None, allowed: frozenset[str]) -> Params:
+    """Defaults updated with overrides, rejecting keys the model doesn't use.
+
+    A misspelled key would otherwise be silently ignored, and a "tuned" model
+    would quietly run on its defaults.
+
+    Raises:
+        ValueError: If ``overrides`` has a key outside ``allowed``.
+    """
+    overrides = overrides or {}
+    if unknown := set(overrides) - allowed:
+        raise ValueError(f"Unknown parameter(s) {sorted(unknown)}; allowed: {sorted(allowed)}")
+    return {**defaults, **overrides}
+
+
 class UpliftModel(Protocol):
     """Fits on (features, treatment, outcome); scores clients by predicted uplift."""
 
