@@ -1,7 +1,6 @@
 """Unit tests for the baseline uplift models, on synthetic data with a known effect."""
 
 import numpy as np
-import pandas as pd
 import pytest
 
 from promolift.evaluation.ranking_metrics import ranking_metrics
@@ -10,31 +9,9 @@ from promolift.models.registry import available_models, build_model
 _UPLIFT_MODELS = ("s_learner", "t_learner", "class_transformation")
 
 
-def _experiment(n: int, seed: int) -> tuple[pd.DataFrame, np.ndarray, np.ndarray]:
-    # Sure things (b >= 0.5) buy 80% of the time, contacted or not. Persuadables
-    # buy 10%, or 40% if contacted. Among treated clients sure things still buy
-    # more (80% vs 40%), so a model of who buys ranks exactly the clients the
-    # SMS can't move first.
-    rng = np.random.default_rng(seed)
-    b = rng.random(n)
-    features = pd.DataFrame(
-        {
-            "b": b,
-            "noise": rng.random(n),
-            "segment": pd.Categorical(rng.choice(["F", "M", "U"], n), categories=["F", "M", "U"]),
-        }
-    )
-    treatment = rng.integers(0, 2, n)
-    p_buy = np.where(b >= 0.5, 0.8, 0.1 + 0.3 * treatment)
-    outcome = (rng.random(n) < p_buy).astype(int)
-    return features, treatment, outcome
-
-
 @pytest.fixture(scope="module")
-def data() -> dict:
-    train = _experiment(6_000, seed=0)
-    holdout = _experiment(4_000, seed=1)
-    return {"train": train, "holdout": holdout}
+def data(sure_things_data: dict) -> dict:
+    return sure_things_data
 
 
 def _holdout_qini(name: str, data: dict) -> float:
@@ -44,7 +21,7 @@ def _holdout_qini(name: str, data: dict) -> float:
 
 
 def test_registry_lists_every_baseline() -> None:
-    assert set(available_models()) == {"random", "response", *_UPLIFT_MODELS}
+    assert {"random", "response", *_UPLIFT_MODELS} <= set(available_models())
 
 
 def test_unknown_model_names_are_rejected() -> None:

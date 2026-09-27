@@ -4,6 +4,12 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+from promolift.models.advanced import (
+    CausalForestModel,
+    DRLearnerModel,
+    UpliftRandomForestModel,
+    XLearnerModel,
+)
 from promolift.models.base import UpliftModel
 from promolift.models.baselines import (
     ClassTransformationModel,
@@ -17,7 +23,17 @@ DEFAULT_SEED = 42
 
 _REGISTRY: dict[str, Callable[[int], UpliftModel]] = {
     model.name: model
-    for model in (RandomModel, ResponseModel, SLearner, TLearner, ClassTransformationModel)
+    for model in (
+        RandomModel,
+        ResponseModel,
+        SLearner,
+        TLearner,
+        ClassTransformationModel,
+        XLearnerModel,
+        DRLearnerModel,
+        CausalForestModel,
+        UpliftRandomForestModel,
+    )
 }
 
 
