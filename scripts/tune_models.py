@@ -3,14 +3,17 @@
 Optuna for the LightGBM-based models (the first trial is always the defaults),
 a small fixed grid for the slow forests. Uplift models are tuned on Qini; the
 response model on purchase AUC among treated clients, its own goal. Each
-model's search is logged as one run in ``promolift-model-tuning``; the best
-settings are written to ``configs/tuned_params.yaml`` after every model, for
-review and commit.
+model's search is logged as one run in ``promolift-model-tuning``. Results
+stage in gitignored ``data/interim/`` after every model (so a crash loses at
+most one model; re-run the missing ones with ``--models``) and are promoted to
+``configs/tuned_params.yaml`` at the end, for review and commit.
 Validation and test are never touched. Run from a clean commit:
 
     uv run --env-file .env python scripts/tune_models.py [--models ...] [--n-trials N]
 
-~45 minutes for all models at the default 40 trials (forests dominate).
+~45 minutes for all models at the default 40 trials (forests dominate), on an
+awake machine: on macOS run it under ``caffeinate -i`` and keep the lid open --
+system sleep pauses the run.
 """
 
 from __future__ import annotations
@@ -27,8 +30,10 @@ from promolift.models.tuning import (
     DEFAULT_N_TRIALS,
     FOREST_GRIDS,
     OPTUNA_MODELS,
+    STAGED_PARAMS_PATH,
     TUNED_PARAMS_PATH,
     log_tuning,
+    promote_tuned_params,
     tune_model,
     write_tuned_params,
 )
@@ -44,7 +49,9 @@ def main() -> int:
     parser.add_argument("--n-trials", type=int, default=DEFAULT_N_TRIALS)
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     parser.add_argument("--output", type=Path, default=project_root() / TUNED_PARAMS_PATH)
+    parser.add_argument("--staging", type=Path, default=project_root() / STAGED_PARAMS_PATH)
     args = parser.parse_args()
+    staging = args.staging
 
     config = default_tracking_config()
     if config.artifact_root is not None:
@@ -61,7 +68,7 @@ def main() -> int:
     for name in args.models:
         result = tune_model(name, train, n_trials=args.n_trials, seed=args.seed)
         log_tuning(result, config=config)
-        write_tuned_params([result], args.output, metadata=metadata)
+        write_tuned_params([result], staging, metadata=metadata)
         gain = result.best_cv_score - result.default_cv_score
         print(
             f"{name:22s} {result.objective:16s} "
@@ -69,6 +76,7 @@ def main() -> int:
             f"{result.best_cv_score:+.4f} ± {result.best_cv_std:.4f} {gain:+.4f}",
             flush=True,
         )
+    promote_tuned_params(staging, args.output)
     print(f"\nWrote {args.output}; review and commit it before training with tuned params.")
     return 0
 

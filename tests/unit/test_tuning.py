@@ -15,6 +15,7 @@ from promolift.models.tuning import (
     load_tuned_params,
     log_tuning,
     objective_for,
+    promote_tuned_params,
     tune_model,
     write_tuned_params,
 )
@@ -138,3 +139,39 @@ def test_response_model_is_tuned_on_its_own_goal_not_on_uplift(train: ModelFrame
     assert result.objective == "treated_roc_auc"
     # A purchase AUC, not a Qini: on sure-things data P(buy | treated) is very predictable.
     assert 0.6 < result.best_cv_score <= 1.0
+
+
+def test_staged_results_reach_the_output_only_when_promoted(
+    train: ModelFrame, tmp_path: Path
+) -> None:
+    # Writing into the repo mid-run would make later runs' git_dirty tag true;
+    # results stage in a gitignored file and are promoted once at the end.
+    staging, output = tmp_path / "interim" / "partial.yaml", tmp_path / "configs" / "tuned.yaml"
+    first = tune_model("class_transformation", train, n_trials=2, seed=0)
+    second = tune_model("s_learner", train, n_trials=2, seed=0)
+
+    write_tuned_params([first], staging, metadata={})
+    write_tuned_params([second], staging, metadata={})
+    assert not output.exists()
+
+    promote_tuned_params(staging, output)
+
+    assert load_tuned_params(output) == {
+        "class_transformation": first.best_params,
+        "s_learner": second.best_params,
+    }
+    assert not staging.exists()
+
+
+def test_promotion_keeps_output_entries_for_models_not_retuned(
+    train: ModelFrame, tmp_path: Path
+) -> None:
+    staging, output = tmp_path / "partial.yaml", tmp_path / "tuned.yaml"
+    kept = tune_model("class_transformation", train, n_trials=2, seed=0)
+    retuned = tune_model("s_learner", train, n_trials=2, seed=0)
+    write_tuned_params([kept], output, metadata={})
+
+    write_tuned_params([retuned], staging, metadata={})
+    promote_tuned_params(staging, output)
+
+    assert set(load_tuned_params(output)) == {"class_transformation", "s_learner"}
