@@ -172,9 +172,14 @@ caffeinate -is uv run --env-file .env python scripts/train_models.py --tuned   #
 uv run --env-file .env python scripts/train_models.py --n-bootstrap 200          # quick look
 ```
 
-Results so far: [docs/baseline_results.md](docs/baseline_results.md) — the
-response model is worse than random targeting; the uplift baselines beat it
-decisively and are statistically tied with each other.
+Results:
+
+- [docs/baseline_results.md](docs/baseline_results.md) — the response model
+  is worse than random targeting; the uplift baselines beat it decisively.
+- [docs/advanced_models_results.md](docs/advanced_models_results.md) —
+  advanced models and tuning reach the same ceiling (Qini ≈ 0.015–0.016, ten
+  variants statistically tied); tuning helped only the weakest defaults; the
+  features are now the bottleneck.
 
 Models aren't stored: every run is reproducible from its commit, split hash,
 and seed. The test split can't be loaded for training or evaluation outside
