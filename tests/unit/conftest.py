@@ -1,8 +1,10 @@
-"""Shared fixtures for unit tests that exercise run lineage and MLflow tracking."""
+"""Shared fixtures: run lineage / MLflow tracking, and a synthetic uplift experiment."""
 
 import subprocess
 from pathlib import Path
 
+import numpy as np
+import pandas as pd
 import pytest
 
 
@@ -35,4 +37,32 @@ def lineage_dirs(clean_repo: Path, data_dir: Path, tmp_path: Path) -> dict[str, 
         "repo_dir": clean_repo,
         "data_dir": data_dir,
         "processed_dir": tmp_path / "processed",
+    }
+
+
+def _sure_things_experiment(n: int, seed: int) -> tuple[pd.DataFrame, np.ndarray, np.ndarray]:
+    # Sure things (b >= 0.5) buy 80% of the time, contacted or not. Persuadables
+    # buy 10%, or 40% if contacted. Among treated clients sure things still buy
+    # more (80% vs 40%), so a model of who buys ranks exactly the clients the
+    # SMS can't move first.
+    rng = np.random.default_rng(seed)
+    b = rng.random(n)
+    features = pd.DataFrame(
+        {
+            "b": b,
+            "noise": rng.random(n),
+            "segment": pd.Categorical(rng.choice(["F", "M", "U"], n), categories=["F", "M", "U"]),
+        }
+    )
+    treatment = rng.integers(0, 2, n)
+    outcome = (rng.random(n) < np.where(b >= 0.5, 0.8, 0.1 + 0.3 * treatment)).astype(int)
+    return features, treatment, outcome
+
+
+@pytest.fixture(scope="session")
+def sure_things_data() -> dict:
+    """Train (6k) and holdout (4k) clients from the sure-things experiment."""
+    return {
+        "train": _sure_things_experiment(6_000, seed=0),
+        "holdout": _sure_things_experiment(4_000, seed=1),
     }

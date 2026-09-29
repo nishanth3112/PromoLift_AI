@@ -1,9 +1,10 @@
 """Train, evaluate, and log models on the canonical split, then compare them on a leaderboard.
 
-Every model is fitted on train and judged on val by ``evaluate_ranking``
-against one shared noise floor. The leaderboard adds what single-model
-reports can't: paired comparisons, which decide whether one model *actually*
-beats another or they are statistically tied.
+Every model variant -- a registered model with default or tuned
+hyperparameters -- is fitted on train and judged on val by
+``evaluate_ranking`` against one shared noise floor. The leaderboard adds
+what single-model reports can't: paired comparisons, which decide whether one
+model *actually* beats another, and whether tuning actually helped.
 """
 
 from __future__ import annotations
@@ -28,20 +29,46 @@ from promolift.evaluation.uncertainty import (
     paired_comparison,
     random_ranking_noise_floor,
 )
+from promolift.models.base import Params
 from promolift.models.dataset import ModelFrame
 from promolift.models.registry import build_model
 from promolift.tracking.mlflow_tracking import Experiment, TrackingConfig, start_run
 
-# Not uplift models: the floor to clear and the incumbent to beat.
-_BASELINES = ("random", "response")
-_INCUMBENT = "response"
+# Reference rankings every Qini plot keeps: the floor and the incumbent.
+_REFERENCES = ("random", "response")
+_MAX_PLOTTED = 8
+_TUNED_SUFFIX = "_tuned"
+
+
+@dataclass(frozen=True)
+class ModelSpec:
+    """One leaderboard entry: a registered model, optionally with overridden hyperparameters."""
+
+    label: str
+    model_name: str
+    overrides: Params | None = None
+    variant: str = "default"
+
+
+def tuned_specs(tuned_params: dict[str, Params]) -> list[ModelSpec]:
+    """``<model>_tuned`` variants from ``tuning.load_tuned_params()``, in file order."""
+    return [
+        ModelSpec(f"{name}{_TUNED_SUFFIX}", name, params, variant="tuned")
+        for name, params in tuned_params.items()
+    ]
+
+
+def _as_spec(spec: str | ModelSpec) -> ModelSpec:
+    return spec if isinstance(spec, ModelSpec) else ModelSpec(spec, spec)
 
 
 @dataclass
 class TrainedModel:
-    """One model's validation scores and evaluation, and the run they're logged in."""
+    """One variant's validation scores and evaluation, and the run they're logged in."""
 
     name: str
+    model_name: str
+    variant: str
     run_id: str
     fit_seconds: float
     scores: np.ndarray
@@ -50,7 +77,7 @@ class TrainedModel:
 
 
 def train_and_evaluate(
-    model_names: Sequence[str],
+    specs: Sequence[str | ModelSpec],
     train: ModelFrame,
     val: ModelFrame,
     *,
@@ -60,10 +87,10 @@ def train_and_evaluate(
     config: TrackingConfig | None = None,
     lineage: dict[str, Path] | None = None,
 ) -> list[TrainedModel]:
-    """Fit each model on ``train``, evaluate on ``val``, one MLflow run per model.
+    """Fit each variant on ``train``, evaluate on ``val``, one MLflow run per variant.
 
     Args:
-        model_names: Registered model names, in the order to train them.
+        specs: Variants to train, in order; a bare name means that model's defaults.
         train, val: Model frames from ``model_frame``.
         config: Tracking destination; defaults to ``default_tracking_config()``.
         lineage: ``repo_dir`` / ``data_dir`` / ``processed_dir`` overrides (for tests).
@@ -72,12 +99,18 @@ def train_and_evaluate(
         val.treatment, val.outcome, n_rankings=n_rankings, seed=seed
     )
     results = []
-    for name in model_names:
-        model = build_model(name, seed=seed)
+    for spec in map(_as_spec, specs):
+        name = spec.label
+        model = build_model(spec.model_name, seed=seed, overrides=spec.overrides)
         with start_run(
             Experiment.UPLIFT_MODELS,
             run_name=name,
-            tags={"run_type": "model", "model_name": name},
+            tags={
+                "run_type": "model",
+                "model_name": name,
+                "base_model": spec.model_name,
+                "variant": spec.variant,
+            },
             config=config,
             **(lineage or {}),
         ) as run:
@@ -98,21 +131,56 @@ def train_and_evaluate(
             )
             mlflow.log_metrics({"fit_seconds": fit_seconds, "n_train_clients": len(train.features)})
             log_evaluation(report)
-        results.append(TrainedModel(name, run.info.run_id, fit_seconds, scores, val, report))
+        results.append(
+            TrainedModel(
+                name,
+                spec.model_name,
+                spec.variant,
+                run.info.run_id,
+                fit_seconds,
+                scores,
+                val,
+                report,
+            )
+        )
     return results
 
 
+def _tuning_pairs(results: Sequence[TrainedModel]) -> list[tuple[str, str]]:
+    """(tuned, default) label pairs for every model trained in both variants."""
+    defaults = {r.model_name: r.name for r in results if r.variant == "default"}
+    return [
+        (r.name, defaults[r.model_name])
+        for r in results
+        if r.variant == "tuned" and r.model_name in defaults
+    ]
+
+
 def _comparison_pairs(results: Sequence[TrainedModel], best: str) -> list[tuple[str, str]]:
-    names = [r.name for r in results]
-    pairs = [(best, other) for other in names if other != best]
-    if _INCUMBENT in names:
-        pairs += [(name, _INCUMBENT) for name in names if name not in _BASELINES and name != best]
+    """Tuned vs default per model (oriented tuned - default), then best vs every other.
+
+    Each unordered pair is compared once.
+    """
+    pairs = _tuning_pairs(results)
+    seen = {frozenset(pair) for pair in pairs}
+    for other in (r.name for r in results if r.name != best):
+        if frozenset((best, other)) not in seen:
+            pairs.append((best, other))
+            seen.add(frozenset((best, other)))
     return pairs
+
+
+def _plotted(ranked: Sequence[TrainedModel]) -> list[TrainedModel]:
+    """Top-ranked variants plus the random and response references, at most 8, in rank order."""
+    references = [r for r in ranked if r.name in _REFERENCES]
+    others = [r for r in ranked if r.name not in _REFERENCES][: _MAX_PLOTTED - len(references)]
+    chosen = {r.name for r in (*references, *others)}
+    return [r for r in ranked if r.name in chosen]
 
 
 def _leaderboard_row(result: TrainedModel) -> dict:
     report = result.report
-    row: dict = {"model": result.name}
+    row: dict = {"model": result.name, "base_model": result.model_name, "variant": result.variant}
     intervals = {
         "qini_auc": report.bootstrap.qini_auc,
         "uplift_auc": report.bootstrap.uplift_auc,
@@ -147,6 +215,35 @@ def _comparison_record(a: str, b: str, comparison: PairedComparison) -> dict:
     }
 
 
+def tuning_effect_table(
+    records: Sequence[dict], by_name: dict[str, TrainedModel]
+) -> pl.DataFrame | None:
+    """Tuned minus default Qini per model, from the paired-comparison records.
+
+    Only same-model (tuned, default) comparisons count: the best variant is
+    also compared with other models' defaults, and those aren't tuning effects.
+    """
+
+    def is_tuning_pair(record: dict) -> bool:
+        a, b = by_name[record["model_a"]], by_name[record["model_b"]]
+        return a.variant == "tuned" and b.variant == "default" and a.model_name == b.model_name
+
+    rows = [
+        {
+            "base_model": by_name[r["model_a"]].model_name,
+            "default_qini_auc": by_name[r["model_b"]].report.metrics.qini_auc,
+            "tuned_qini_auc": by_name[r["model_a"]].report.metrics.qini_auc,
+            "qini_diff": r["qini_auc"]["difference"],
+            "qini_diff_ci_lower": r["qini_auc"]["lower"],
+            "qini_diff_ci_upper": r["qini_auc"]["upper"],
+            "win_rate": r["qini_auc"]["win_rate"],
+        }
+        for r in records
+        if is_tuning_pair(r)
+    ]
+    return pl.DataFrame(rows) if rows else None
+
+
 def log_leaderboard(
     results: Sequence[TrainedModel],
     *,
@@ -155,11 +252,12 @@ def log_leaderboard(
     config: TrackingConfig | None = None,
     lineage: dict[str, Path] | None = None,
 ) -> str:
-    """Log a leaderboard run comparing already-evaluated models; return its run id.
+    """Log a leaderboard run comparing already-evaluated variants; return its run id.
 
-    Models are ranked by val Qini AUC. Paired comparisons cover the best model
-    against every other, and every uplift model against the response model
-    (the incumbent), each on identical bootstrap resamples.
+    Variants are ranked by val Qini AUC. Paired comparisons (identical
+    bootstrap resamples) cover tuned vs default for every model trained both
+    ways -- summarized in ``tuning_effect.csv`` -- and the best variant against
+    every other.
     """
     ranked = sorted(results, key=lambda r: r.report.metrics.qini_auc, reverse=True)
     best = ranked[0]
@@ -181,6 +279,7 @@ def log_leaderboard(
         comparison_metrics[f"qini_diff_{a}_vs_{b}"] = comparison.qini_auc.difference
         comparison_metrics[f"qini_win_rate_{a}_vs_{b}"] = comparison.qini_auc.win_rate
 
+    plotted = _plotted(ranked)
     with start_run(
         Experiment.UPLIFT_MODELS,
         run_name="leaderboard",
@@ -188,6 +287,7 @@ def log_leaderboard(
             "run_type": "leaderboard",
             "best_model": best.name,
             "models": ",".join(r.name for r in ranked),
+            "plotted_models": ",".join(r.name for r in plotted),
             "evaluated_split": val.split,
         },
         config=config,
@@ -200,7 +300,10 @@ def log_leaderboard(
         table = pl.DataFrame([_leaderboard_row(r) for r in ranked])
         mlflow.log_text(table.write_csv(), "leaderboard/leaderboard.csv")
         mlflow.log_dict(records, "leaderboard/paired_comparisons.json")
+        effect = tuning_effect_table(records, by_name)
+        if effect is not None:
+            mlflow.log_text(effect.write_csv(), "leaderboard/tuning_effect.csv")
         mlflow.log_figure(
-            qini_curve_figure([r.report for r in ranked]), "leaderboard/qini_curves.png"
+            qini_curve_figure([r.report for r in plotted]), "leaderboard/qini_curves.png"
         )
         return run.info.run_id

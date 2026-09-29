@@ -77,4 +77,6 @@ addopts = "-m 'not integration'"
 filterwarnings = [
     # Known and pinned against (see scikit-learn bound above); not actionable here.
     "ignore:Function stable_cumsum is deprecated:FutureWarning",
+    # shap (imported by econml/causalml) calls soon-deprecated matplotlib colormap setters.
+    "ignore::PendingDeprecationWarning:shap.plots.colors._colors",
 ]

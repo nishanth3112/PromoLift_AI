@@ -135,24 +135,51 @@ Qini/decile plots. Compute the noise floor once per split with
 models with `uncertainty.paired_comparison`. Evaluating on `test` raises unless
 `final_evaluation=True`.
 
-## Baseline models
+## Models
 
 Models implement `promolift.models.base.UpliftModel` and are built by name via
-`promolift.models.registry.build_model`: `random` (sanity floor), `response`
-(P(buy | contacted), trained on treated clients — the traditional approach),
-and the scikit-uplift `s_learner`, `t_learner`, `class_transformation`, all on
-one shared LightGBM configuration. Train all of them on the canonical split and
-log a validation leaderboard (per-model runs plus a `leaderboard` run with
-overlaid Qini curves and paired comparisons):
+`promolift.models.registry.build_model(name, overrides=...)`:
+
+- `random` (sanity floor) and `response` — P(buy | contacted), trained on
+  treated clients: the traditional approach this project argues against.
+- scikit-uplift `s_learner`, `t_learner`, `class_transformation` on one shared
+  LightGBM configuration.
+- `x_learner`, `dr_learner`, `causal_forest` (econml) and `uplift_rf`
+  (causalml), which receive a train-fitted NaN-free matrix
+  (`models.preprocessing.NumericEncoder`: medians + missing flags + one-hot).
+
+### Tuning
+
+Hyperparameters are tuned by 3-fold cross-validation **inside train** (val and
+test untouched): Optuna for the LightGBM-based models, whose first trial is
+always the defaults, and small grids for the two forests. Uplift models are
+tuned on Qini; the response model on purchase AUC among treated clients, its
+own goal. Results are committed in `configs/tuned_params.yaml`:
 
 ```bash
-uv run --env-file .env python scripts/train_baselines.py            # ~8-9 min
-uv run --env-file .env python scripts/train_baselines.py --n-bootstrap 200   # quick look
+caffeinate -is uv run --env-file .env python scripts/tune_models.py   # ~50 min, keep the Mac awake
 ```
 
-Results: [docs/baseline_results.md](docs/baseline_results.md) — the response
-model is worse than random targeting; the three uplift baselines beat it
-decisively and are statistically tied with each other.
+### Training and the leaderboard
+
+Train every model (and, with `--tuned`, a `<model>_tuned` variant from the
+committed params) on train, evaluate on val, and log per-variant runs plus a
+`leaderboard` run with Qini curves, paired comparisons, and
+`tuning_effect.csv` (tuned vs default per model):
+
+```bash
+caffeinate -is uv run --env-file .env python scripts/train_models.py --tuned   # ~30 min
+uv run --env-file .env python scripts/train_models.py --n-bootstrap 200          # quick look
+```
+
+Results:
+
+- [docs/baseline_results.md](docs/baseline_results.md) — the response model
+  is worse than random targeting; the uplift baselines beat it decisively.
+- [docs/advanced_models_results.md](docs/advanced_models_results.md) —
+  advanced models and tuning reach the same ceiling (Qini ≈ 0.015–0.016, ten
+  variants statistically tied); tuning helped only the weakest defaults; the
+  features are now the bottleneck.
 
 Models aren't stored: every run is reproducible from its commit, split hash,
 and seed. The test split can't be loaded for training or evaluation outside
