@@ -3,9 +3,10 @@
 Express points are the promotional kind (campaign-issued, short-lived), so
 how a client earns and spends them is the closest pre-treatment signal of how
 they react to a promotion. ``trn_sum_from_red`` / ``trn_sum_from_iss`` are
-not used: per transaction they only split ``purchase_sum`` into its redeemed
-and issued parts, which ``redeem_tx_rate`` and ``points_discount_share``
-already capture.
+not used: ``red`` is a line's full price, recorded only on transactions that
+spent points, and ``iss`` the part paid in money, so at client level they
+carry only redemption information that ``redeem_tx_rate`` and
+``points_discount_share`` already capture.
 """
 
 from __future__ import annotations
