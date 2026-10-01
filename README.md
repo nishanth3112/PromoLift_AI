@@ -123,6 +123,26 @@ which would invalidate every result evaluated on the old one):
 uv run --env-file .env python scripts/make_split.py
 ```
 
+## Features
+
+Client features are built from `clients.csv`, `products.csv`, and the
+purchase history up to its last transaction, in independently buildable
+groups (`promolift.features.build.FeatureGroup`): the 19 Phase 10 features
+(`demographics`, `purchase_behavior`, `product_mix`) plus
+`promo_responsiveness`, `purchase_dynamics`, `basket_store`, and
+`category_spend`. `promolift.features.store.load_feature_table(groups)` builds
+a table once (~2 min for all groups) and caches it as parquet in
+`data/interim/features/` (gitignored); delete that folder or pass
+`rebuild=True` to force a rebuild. The cache key covers the feature code, raw
+data, Polars version, and groups, so editing a builder or the data misses the
+cache automatically.
+
+Runs tag `feature_cache_key` (reproducible: same code + data + groups → same
+key) and `feature_table_sha256` (the exact values used). Rebuilt tables differ
+at ~1e-13 relative in float aggregates because Polars sums in parallel, so the
+content hash is not stable across rebuilds — the key is the identity to
+reproduce from.
+
 ## Evaluation
 
 `promolift.evaluation.report.evaluate_ranking` is the one way to judge a model's
