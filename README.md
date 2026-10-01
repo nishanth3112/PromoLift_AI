@@ -143,6 +143,20 @@ at ~1e-13 relative in float aggregates because Polars sums in parallel, so the
 content hash is not stable across rebuilds — the key is the identity to
 reproduce from.
 
+### Feature ablation
+
+Which groups to keep is decided by 3-fold CV **inside train** (val and test
+untouched), with the Phase 10 tuned hyperparameters held fixed for
+`class_transformation`, `s_learner`, and `dr_learner`. Configs: base, base +
+each new group alone, and all groups. A group is kept if its paired
+out-of-fold Qini gain over base (mean across the three models) has a 95% CI
+above 0; all groups are chosen over the kept set only if significantly
+better. Runs log to `promolift-feature-ablation`:
+
+```bash
+caffeinate -is uv run --env-file .env python scripts/run_ablation.py   # ~15 min
+```
+
 ## Evaluation
 
 `promolift.evaluation.report.evaluate_ranking` is the one way to judge a model's
