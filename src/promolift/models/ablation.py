@@ -493,3 +493,136 @@ def log_ablation(
         )
         mlflow.log_dict(decision, "ablation/decision.json")
         return run.info.run_id
+
+
+@dataclass(frozen=True)
+class Arm:
+    """A feature set with its own per-model hyperparameters."""
+
+    name: str
+    groups: tuple[FeatureGroup, ...]
+    overrides: Mapping[str, Params]
+
+
+@dataclass
+class ArmComparison:
+    """Two arms' CV results and the challenger's paired gain over the baseline."""
+
+    challenger: Arm
+    baseline: Arm
+    models: tuple[str, ...]
+    cv_results: list[CVResult]
+    bootstrap: QiniBootstrap
+    gain: FeatureGain
+    n_folds: int
+
+    @property
+    def verdict(self) -> str:
+        if self.gain.lower > 0:
+            return "challenger better"
+        if self.gain.upper < 0:
+            return "challenger worse"
+        return "tied"
+
+
+def compare_arms(
+    make_frame: FrameFactory,
+    challenger: Arm,
+    baseline: Arm,
+    *,
+    models: Sequence[str] = ABLATION_MODELS,
+    n_folds: int = DEFAULT_N_FOLDS,
+    n_bootstrap: int = DEFAULT_N_BOOTSTRAP,
+    confidence: float = DEFAULT_CONFIDENCE,
+    seed: int = DEFAULT_SEED,
+    progress: Callable[[str], None] = lambda _message: None,
+) -> ArmComparison:
+    """Paired CV comparison of two feature sets, each with its own tuned params.
+
+    The ablation holds one set of params fixed across feature sets; this asks
+    whether a feature set wins once it gets params tuned for it. Both arms run
+    on the same folds and bootstrap resamples as the ablation.
+    """
+    reference = make_frame(baseline.groups)
+    folds = cv_folds(reference.treatment, reference.outcome, n_folds=n_folds, seed=seed)
+    cv_results = []
+    for arm in (baseline, challenger):
+        cv_results += _run_config(
+            FeatureConfig(arm.name, arm.groups),
+            make_frame,
+            folds,
+            reference,
+            models=models,
+            overrides=arm.overrides,
+            seed=seed,
+            progress=progress,
+        )
+    progress(f"Bootstrapping {len(cv_results)} rankings ({n_bootstrap} paired resamples)...")
+    boot = bootstrap_qini(
+        {(r.config, r.model_name): r.oof_scores for r in cv_results},
+        reference.treatment,
+        reference.outcome,
+        n_bootstrap=n_bootstrap,
+        seed=seed,
+    )
+    gain = feature_gain(boot, challenger.name, baseline.name, models=models, confidence=confidence)
+    return ArmComparison(challenger, baseline, tuple(models), cv_results, boot, gain, n_folds)
+
+
+def log_arm_comparison(
+    result: ArmComparison,
+    *,
+    feature_tags: Mapping[str, str],
+    config: TrackingConfig | None = None,
+    lineage: dict[str, Path] | None = None,
+) -> str:
+    """Log the comparison (both arms' params, CV results, paired gain) as one run."""
+    params: dict[str, object] = {"n_folds": result.n_folds, "seed": result.bootstrap.seed}
+    for role, arm in (("challenger", result.challenger), ("baseline", result.baseline)):
+        for model in result.models:
+            for key, value in (arm.overrides.get(model) or {}).items():
+                params[f"{role}_{model}_{key}"] = value
+    with start_run(
+        Experiment.FEATURE_ABLATION,
+        run_name=f"compare-{result.challenger.name}-vs-{result.baseline.name}",
+        tags={
+            **feature_tags,
+            "run_type": "tuned_comparison",
+            "challenger": result.challenger.name,
+            "baseline": result.baseline.name,
+            "challenger_groups": _groups_tag(result.challenger.groups),
+            "baseline_groups": _groups_tag(result.baseline.groups),
+            "verdict": result.verdict,
+        },
+        config=config,
+        **(lineage or {}),
+    ) as run:
+        mlflow.log_params(params)
+        mlflow.log_metrics(
+            {
+                "qini_gain": result.gain.difference,
+                "qini_gain_ci_lower": result.gain.lower,
+                "qini_gain_ci_upper": result.gain.upper,
+                "qini_gain_win_rate": result.gain.win_rate,
+                **{
+                    f"{cv.config}_cv_qini_mean_{cv.model_name}": cv.cv_mean
+                    for cv in result.cv_results
+                },
+            }
+        )
+        cv_table = pl.DataFrame(
+            [
+                {
+                    "arm": cv.config,
+                    "model": cv.model_name,
+                    "cv_qini_mean": cv.cv_mean,
+                    "cv_qini_std": cv.cv_std,
+                    "fold_qini": json.dumps(list(cv.fold_qini)),
+                    "oof_qini": result.bootstrap.estimates[(cv.config, cv.model_name)],
+                }
+                for cv in result.cv_results
+            ]
+        )
+        mlflow.log_text(cv_table.write_csv(), "comparison/cv_results.csv")
+        mlflow.log_dict(_gain_row(result.gain), "comparison/gain.json")
+        return run.info.run_id

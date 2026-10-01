@@ -42,6 +42,10 @@ DEFAULT_N_TRIALS = 40
 TUNED_PARAMS_PATH = Path("configs") / "tuned_params.yaml"
 # Gitignored (data/interim/): staged here during a run, promoted at the end.
 STAGED_PARAMS_PATH = Path("data") / "interim" / "tuned_params.partial.yaml"
+# Params tuned on every feature group, kept apart from the base-feature params
+# the committed models use (the Phase 11 fairness check).
+ALL_FEATURES_PARAMS_PATH = Path("configs") / "tuned_params_all_features.yaml"
+ALL_FEATURES_STAGED_PATH = Path("data") / "interim" / "tuned_params_all_features.partial.yaml"
 QINI_OBJECTIVE = "qini_auc"
 TREATED_AUC_OBJECTIVE = "treated_roc_auc"
 _OBJECTIVES = {"response": TREATED_AUC_OBJECTIVE}
@@ -239,14 +243,19 @@ def tune_model(
 def log_tuning(
     result: TuningResult,
     *,
+    tags: dict[str, str] | None = None,
     config: TrackingConfig | None = None,
     lineage: dict[str, Path] | None = None,
 ) -> str:
-    """Log one model's search (objective, best/default CV scores, all trials) as a tuning run."""
+    """Log one model's search (objective, best/default CV scores, all trials) as a tuning run.
+
+    ``tags`` (e.g. feature lineage) are added; they can't override the run's own tags.
+    """
     with start_run(
         Experiment.MODEL_TUNING,
         run_name=f"tune-{result.model_name}",
         tags={
+            **(tags or {}),
             "run_type": "tuning",
             "model_name": result.model_name,
             "search": result.search,

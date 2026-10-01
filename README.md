@@ -157,6 +157,17 @@ better. Runs log to `promolift-feature-ablation`:
 caffeinate -is uv run --env-file .env python scripts/run_ablation.py   # ~15 min
 ```
 
+Because the ablation holds base-tuned params fixed, a fairness check re-tunes
+the three models on all groups (written to
+`configs/tuned_params_all_features.yaml`, leaving the base params alone) and
+compares tuned-all against tuned-base on the same folds:
+
+```bash
+caffeinate -is uv run --env-file .env python scripts/tune_models.py --feature-set all \
+    --models class_transformation s_learner dr_learner                       # ~20 min
+caffeinate -is uv run --env-file .env python scripts/compare_tuned_features.py   # ~10 min
+```
+
 ## Evaluation
 
 `promolift.evaluation.report.evaluate_ranking` is the one way to judge a model's

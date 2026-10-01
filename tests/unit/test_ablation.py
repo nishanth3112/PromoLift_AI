@@ -12,13 +12,16 @@ from mlflow import MlflowClient
 from promolift.features.build import FeatureGroup
 from promolift.models.ablation import (
     AblationResult,
+    Arm,
     FeatureConfig,
     FeatureGain,
     ablation_configs,
     bootstrap_qini,
     choose_feature_set,
+    compare_arms,
     feature_gain,
     log_ablation,
+    log_arm_comparison,
     out_of_fold_scores,
     run_ablation,
 )
@@ -277,3 +280,30 @@ def test_feature_config_name_lists_added_groups() -> None:
 
     assert config.name == "+promo_responsiveness+purchase_dynamics"
     assert config.groups == (DEMO, PROMO, DYN)
+
+
+def test_arm_comparison_pairs_each_arm_with_its_own_params(
+    tracking: TrackingConfig, lineage_dirs: dict[str, Path]
+) -> None:
+    challenger = Arm("all_tuned", (DEMO, PROMO, DYN), {m: {"n_estimators": 60} for m in _MODELS})
+    baseline = Arm("base_tuned", (DEMO,), _OVERRIDES)
+
+    result = compare_arms(_make_frame_factory(), challenger, baseline, models=_MODELS, **_FAST)
+
+    assert {(r.config, r.model_name) for r in result.cv_results} == {
+        (arm, model) for arm in ("all_tuned", "base_tuned") for model in _MODELS
+    }
+    assert result.gain.config == "all_tuned"
+    assert result.gain.baseline == "base_tuned"
+    # Only the challenger sees the uplift column "b".
+    assert result.gain.lower > 0
+
+    run_id = log_arm_comparison(
+        result, feature_tags={"feature_cache_key": "k"}, config=tracking, lineage=lineage_dirs
+    )
+    run = MlflowClient(tracking_uri=tracking.tracking_uri).get_run(run_id).data
+    assert run.tags["run_type"] == "tuned_comparison"
+    assert run.tags["challenger_groups"] == "demographics,promo_responsiveness,purchase_dynamics"
+    assert run.tags["verdict"] == "challenger better"
+    assert run.params["challenger_t_learner_n_estimators"] == "60"
+    assert run.metrics["qini_gain"] == pytest.approx(result.gain.difference)
