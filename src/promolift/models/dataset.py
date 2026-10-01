@@ -37,7 +37,7 @@ def build_model_features(base_dir: Path | None = None) -> pl.DataFrame:
     to ``model_frame`` for every split.
     """
     reference_date = transaction_date_integrity(base_dir).max_date
-    return build_feature_table(reference_date, base_dir)
+    return build_feature_table(reference_date, base_dir).frame
 
 
 def _to_pandas(frame: pl.DataFrame, categories: dict[str, list[str]]) -> pd.DataFrame:

@@ -66,3 +66,30 @@ def sure_things_data() -> dict:
         "train": _sure_things_experiment(6_000, seed=0),
         "holdout": _sure_things_experiment(4_000, seed=1),
     }
+
+
+@pytest.fixture
+def feature_raw_dir(tmp_path: Path) -> Path:
+    """Raw clients/products/purchases with every column any feature group reads."""
+    raw = tmp_path / "feature_raw"
+    raw.mkdir()
+    (raw / "clients.csv").write_text(
+        "client_id,first_issue_date,first_redeem_date,age,gender\n"
+        "c1,2018-01-01 00:00:00,2018-02-01 00:00:00,30,F\n"
+        "c2,2018-01-01 00:00:00,,40,M\n"
+    )
+    (raw / "products.csv").write_text(
+        "product_id,level_1,level_2,level_3,level_4,segment_id,brand_id,vendor_id,"
+        "netto,is_own_trademark,is_alcohol\n"
+        "p1,a,x,c,d,1.0,b,v,1.0,0,0\n"
+        "p2,a,y,c,d,1.0,b,v,1.0,1,0\n"
+    )
+    (raw / "purchases.csv").write_text(
+        "client_id,transaction_id,transaction_datetime,regular_points_received,"
+        "express_points_received,regular_points_spent,express_points_spent,purchase_sum,"
+        "store_id,product_id,product_quantity,trn_sum_from_iss,trn_sum_from_red\n"
+        "c1,t1,2019-01-01 10:00:00,10.0,0.0,0.0,0.0,100.0,s1,p1,1.0,60.0,\n"
+        "c1,t1,2019-01-01 10:00:00,10.0,0.0,0.0,0.0,100.0,s1,p2,2.0,40.0,\n"
+        "c1,t2,2019-01-05 18:00:00,0.0,5.0,-20.0,0.0,50.0,s2,p1,1.0,30.0,50.0\n"
+    )
+    return raw
