@@ -257,6 +257,18 @@ class AblationResult:
     n_folds: int
     confidence: float
 
+    def reported_gains(self) -> list[FeatureGain]:
+        """Every gain vs base, plus all vs kept unless that is the same comparison.
+
+        With nothing kept, "all vs kept" *is* "all vs base".
+        """
+        gains = list(self.gains.values())
+        seen = {(g.config, g.baseline) for g in gains}
+        extra = self.all_vs_kept
+        if extra is not None and (extra.config, extra.baseline) not in seen:
+            gains.append(extra)
+        return gains
+
 
 def _run_config(
     config: FeatureConfig,
@@ -440,9 +452,7 @@ def log_ablation(
                     }
                 )
 
-    gains = list(result.gains.values())
-    if result.all_vs_kept is not None:
-        gains.append(result.all_vs_kept)
+    gains = result.reported_gains()
     cv_table = pl.DataFrame(
         [
             {

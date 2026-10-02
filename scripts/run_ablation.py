@@ -65,10 +65,7 @@ def main() -> int:
     summary_run = log_ablation(result, feature_tags=stored.lineage_tags(ALL_GROUPS), config=config)
 
     print("\nPaired out-of-fold Qini gain (mean across models, 95% CI):")
-    gains = list(result.gains.values())
-    if result.all_vs_kept is not None and result.all_vs_kept not in gains:
-        gains.append(result.all_vs_kept)
-    for gain in gains:
+    for gain in result.reported_gains():
         verdict = "better" if gain.lower > 0 else "worse" if gain.upper < 0 else "tied"
         print(
             f"  {gain.config:40s} vs {gain.baseline:22s} {gain.difference:+.4f} "

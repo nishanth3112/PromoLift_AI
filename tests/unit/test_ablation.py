@@ -307,3 +307,25 @@ def test_arm_comparison_pairs_each_arm_with_its_own_params(
     assert run.tags["verdict"] == "challenger better"
     assert run.params["challenger_t_learner_n_estimators"] == "60"
     assert run.metrics["qini_gain"] == pytest.approx(result.gain.difference)
+
+
+def test_logged_gains_do_not_repeat_all_vs_base_when_nothing_is_kept(
+    tracking: TrackingConfig, lineage_dirs: dict[str, Path]
+) -> None:
+    # With nothing kept, "all vs kept" is "all vs base" -- already in the gains.
+    result = run_ablation(
+        _make_frame_factory(),
+        models=_MODELS,
+        overrides=_OVERRIDES,
+        base=(DEMO,),
+        candidates=(DYN,),
+        **_FAST,
+    )
+    assert result.kept_groups == ()
+
+    run_id = log_ablation(result, feature_tags={}, config=tracking, lineage=lineage_dirs)
+
+    client = MlflowClient(tracking_uri=tracking.tracking_uri)
+    path = client.download_artifacts(run_id, "ablation/feature_gains.csv")
+    pairs = pl.read_csv(path).select("config", "baseline").rows()
+    assert sorted(pairs) == [("+purchase_dynamics", "base"), ("all", "base")]
