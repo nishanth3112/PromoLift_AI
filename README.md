@@ -225,6 +225,9 @@ Results:
   advanced models and tuning reach the same ceiling (Qini ≈ 0.015–0.016, ten
   variants statistically tied); tuning helped only the weakest defaults; the
   features are now the bottleneck.
+- [docs/feature_engineering_results.md](docs/feature_engineering_results.md) —
+  47 new features in four groups don't beat the 19 base features, even with
+  hyperparameters re-tuned for them; the models keep the base features.
 
 Models aren't stored: every run is reproducible from its commit, split hash,
 and seed. The test split can't be loaded for training or evaluation outside
