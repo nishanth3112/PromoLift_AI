@@ -72,6 +72,12 @@ def _validated(
     return s, t.astype(int), y.astype(int)
 
 
+def qini_auc(scores: ArrayLike, treatment: ArrayLike, outcome: ArrayLike) -> float:
+    """Normalized Qini AUC alone -- for bootstrap loops that need nothing else."""
+    s, t, y = _validated(scores, treatment, outcome)
+    return float(qini_auc_score(y, s, t))
+
+
 def ranking_metrics(
     scores: ArrayLike,
     treatment: ArrayLike,

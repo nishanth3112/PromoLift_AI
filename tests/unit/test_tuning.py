@@ -112,6 +112,23 @@ def test_log_tuning_records_best_and_default_scores_and_trials(
     assert [a.path for a in client.list_artifacts(run_id, "tuning")] == ["tuning/trials.csv"]
 
 
+def test_log_tuning_records_extra_tags_without_overriding_its_own(
+    train: ModelFrame, config: TrackingConfig, lineage_dirs: dict[str, Path]
+) -> None:
+    result = tune_model("response", train, n_trials=2, seed=0)
+
+    run_id = log_tuning(
+        result,
+        tags={"feature_groups": "demographics,basket_store", "run_type": "other"},
+        config=config,
+        lineage=lineage_dirs,
+    )
+
+    tags = MlflowClient(tracking_uri=config.tracking_uri).get_run(run_id).data.tags
+    assert tags["feature_groups"] == "demographics,basket_store"
+    assert tags["run_type"] == "tuning"
+
+
 def test_unknown_models_cannot_be_tuned(train: ModelFrame) -> None:
     with pytest.raises(ValueError, match="random"):
         tune_model("random", train, n_trials=2, seed=0)

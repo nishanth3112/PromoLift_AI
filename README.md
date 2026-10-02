@@ -123,6 +123,51 @@ which would invalidate every result evaluated on the old one):
 uv run --env-file .env python scripts/make_split.py
 ```
 
+## Features
+
+Client features are built from `clients.csv`, `products.csv`, and the
+purchase history up to its last transaction, in independently buildable
+groups (`promolift.features.build.FeatureGroup`): the 19 Phase 10 features
+(`demographics`, `purchase_behavior`, `product_mix`) plus
+`promo_responsiveness`, `purchase_dynamics`, `basket_store`, and
+`category_spend`. `promolift.features.store.load_feature_table(groups)` builds
+a table once (~2 min for all groups) and caches it as parquet in
+`data/interim/features/` (gitignored); delete that folder or pass
+`rebuild=True` to force a rebuild. The cache key covers the feature code, raw
+data, Polars version, and groups, so editing a builder or the data misses the
+cache automatically.
+
+Runs tag `feature_cache_key` (reproducible: same code + data + groups → same
+key) and `feature_table_sha256` (the exact values used). Rebuilt tables differ
+at ~1e-13 relative in float aggregates because Polars sums in parallel, so the
+content hash is not stable across rebuilds — the key is the identity to
+reproduce from.
+
+### Feature ablation
+
+Which groups to keep is decided by 3-fold CV **inside train** (val and test
+untouched), with the Phase 10 tuned hyperparameters held fixed for
+`class_transformation`, `s_learner`, and `dr_learner`. Configs: base, base +
+each new group alone, and all groups. A group is kept if its paired
+out-of-fold Qini gain over base (mean across the three models) has a 95% CI
+above 0; all groups are chosen over the kept set only if significantly
+better. Runs log to `promolift-feature-ablation`:
+
+```bash
+caffeinate -is uv run --env-file .env python scripts/run_ablation.py   # ~15 min
+```
+
+Because the ablation holds base-tuned params fixed, a fairness check re-tunes
+the three models on all groups (written to
+`configs/tuned_params_all_features.yaml`, leaving the base params alone) and
+compares tuned-all against tuned-base on the same folds:
+
+```bash
+caffeinate -is uv run --env-file .env python scripts/tune_models.py --feature-set all \
+    --models class_transformation s_learner dr_learner                       # ~20 min
+caffeinate -is uv run --env-file .env python scripts/compare_tuned_features.py   # ~10 min
+```
+
 ## Evaluation
 
 `promolift.evaluation.report.evaluate_ranking` is the one way to judge a model's
@@ -180,6 +225,9 @@ Results:
   advanced models and tuning reach the same ceiling (Qini ≈ 0.015–0.016, ten
   variants statistically tied); tuning helped only the weakest defaults; the
   features are now the bottleneck.
+- [docs/feature_engineering_results.md](docs/feature_engineering_results.md) —
+  47 new features in four groups don't beat the 19 base features, even with
+  hyperparameters re-tuned for them; the models keep the base features.
 
 Models aren't stored: every run is reproducible from its commit, split hash,
 and seed. The test split can't be loaded for training or evaluation outside
