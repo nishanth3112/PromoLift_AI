@@ -27,8 +27,8 @@ Keep reusable logic in `src/promolift/`; notebooks and `scripts/` only orchestra
 
 ## Architecture
 
-`data/` owns loading and the canonical split, `validation/` data and experiment checks, `features/` leakage-free client features, `evaluation/` uplift metrics, and `tracking/` MLflow configuration and lineage. Start runs with `tracking.mlflow_tracking.start_run`, not bare `mlflow`. The test split is locked: use it only for the final evaluation, never for model selection or tuning.
+`data/` owns loading and the canonical split, `validation/` data and experiment checks, `features/` leakage-free client features, `evaluation/` uplift metrics, `optimization/` campaign economics and targeting depth, and `tracking/` MLflow configuration and lineage. Start runs with `tracking.mlflow_tracking.start_run`, not bare `mlflow`. The test split is locked and its one final evaluation is done (`docs/final_results.md`): never load it again.
 
 ## Definition of Done
 
-Add deterministic tests on synthetic temp fixtures. Keep CI free of raw data, credentials, and external services. Document new configuration and scripts in the README. Don't implement deployment, budget optimization, or monitoring unless asked. Never commit `.env`, credentials, data, or `mlruns/`.
+Add deterministic tests on synthetic temp fixtures. Keep CI free of raw data, credentials, and external services. Document new configuration and scripts in the README. Build only the current roadmap phase; don't implement deployment or monitoring unless asked. Never commit `.env`, credentials, data, or `mlruns/`.

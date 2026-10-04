@@ -1,4 +1,4 @@
-"""Static evaluation plots logged as MLflow artifacts: Qini curves and decile uplift.
+"""Static plots logged as MLflow artifacts: Qini curves, decile uplift, and profit curves.
 
 Built on ``matplotlib.figure.Figure`` directly rather than pyplot, so no GUI
 backend or global figure state is involved (safe on headless CI). Colors,
@@ -8,7 +8,7 @@ hues in fixed order, ink-colored text, hairline recessive gridlines.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING
 
 from matplotlib.axes import Axes
@@ -17,6 +17,7 @@ from matplotlib.ticker import PercentFormatter
 
 if TYPE_CHECKING:
     from promolift.evaluation.report import EvaluationReport
+    from promolift.optimization.targeting import ProfitCurve
 
 # Categorical slots in fixed order (never cycled); validated colorblind-safe
 # as a set. Light surface only: these are static images, not themed UI.
@@ -115,4 +116,51 @@ def decile_uplift_figure(report: EvaluationReport) -> Figure:
     axes.set_xticks(list(positions), report.deciles["bucket"].to_list())
     axes.set_xlabel("Score decile, highest predicted uplift first", fontsize=9)
     axes.set_ylabel("Uplift (pp)", fontsize=9)
+    return figure
+
+
+def profit_curve_figure(
+    curves: Mapping[str, ProfitCurve], *, chosen: str, chosen_depth: float
+) -> Figure:
+    """Profit per 1,000 clients by targeting depth, with the chosen model's CI band.
+
+    The chosen depth is marked on the chosen model's curve; profit 0 is
+    texting nobody.
+    """
+    if chosen not in curves:
+        raise ValueError(f"{chosen!r} has no curve")
+    if len(curves) > len(_SERIES):
+        raise ValueError(f"at most {len(_SERIES)} curves per plot")
+
+    economics = curves[chosen].economics
+    figure, axes = _axes(
+        f"Profit by targeting depth (break-even uplift {economics.break_even_uplift:.1%})"
+    )
+    for (label, curve), color in zip(curves.items(), _SERIES, strict=False):
+        depth_pct = curve.depths * 100
+        if label == chosen:
+            axes.fill_between(
+                depth_pct, curve.profit_lower, curve.profit_upper, color=color, alpha=0.15, lw=0
+            )
+        axes.plot(depth_pct, curve.profit_per_1000, color=color, linewidth=2, label=label)
+    axes.axhline(0, color=_AXIS, linewidth=0.8)
+
+    chosen_curve = curves[chosen]
+    index = int(abs(chosen_curve.depths - chosen_depth).argmin())
+    axes.plot(
+        chosen_depth * 100,
+        chosen_curve.profit_per_1000[index],
+        marker="o",
+        markersize=7,
+        color=_SERIES[list(curves).index(chosen)],
+        markeredgecolor=_SURFACE,
+        linestyle="none",
+        label=f"chosen depth {chosen_depth:.0%}",
+    )
+
+    axes.set_xlim(0, 100)
+    axes.xaxis.set_major_formatter(PercentFormatter())
+    axes.set_xlabel("Clients texted, ranked by score", fontsize=9)
+    axes.set_ylabel("Profit per 1,000 clients", fontsize=9)
+    axes.legend(frameon=False, loc="best", fontsize=8, labelcolor=_INK_PRIMARY)
     return figure

@@ -1,0 +1,18 @@
+# Campaign economics for budget targeting (scripts/targeting_analysis.py).
+# Every value below is a PLACEHOLDER ASSUMPTION until the business confirms it.
+# The best targeting depth depends only on sms_cost / margin_per_purchase, so
+# the break-even table in docs/targeting_results.md covers other values too.
+currency: RUB
+# Assumed bulk-SMS price per message.
+sms_cost: 3.0
+# Assumed grocery gross margin, as a fraction of basket value.
+gross_margin: 0.24
+# Profit per extra purchase the SMS causes. null = the average transaction value
+# in purchases.csv times gross_margin (one extra transaction per converted client).
+margin_per_purchase: null
+# Optional campaign budget (currency) and the number of clients it covers;
+# set both or neither. null = no cap.
+budget: null
+campaign_clients: null
+# Break-even uplifts (sms_cost / margin_per_purchase) for the sensitivity table.
+break_even_grid: [0.005, 0.01, 0.02, 0.03, 0.04, 0.05, 0.075, 0.1]

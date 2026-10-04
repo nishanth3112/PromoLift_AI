@@ -43,6 +43,7 @@ from promolift.models.final_evaluation import (
 )
 from promolift.models.registry import DEFAULT_SEED
 from promolift.models.selection import (
+    DEFAULT_LEADERBOARD_RUN_ID,
     leaderboard_spec,
     load_leaderboard,
     select_final_model,
@@ -56,15 +57,13 @@ from promolift.tracking.lineage import (
 )
 from promolift.tracking.mlflow_tracking import TrackingConfig, default_tracking_config
 
-# The Phase 10 validation leaderboard (docs/advanced_models_results.md).
-LEADERBOARD_RUN_ID = "6fc6717a9b6a46d5b112c83120f2694d"
 REFERENCE_MODELS = ("s_learner_tuned", "causal_forest", "response", "random")
 DRY_RUN_RESAMPLES = 20
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--leaderboard-run", default=LEADERBOARD_RUN_ID)
+    parser.add_argument("--leaderboard-run", default=DEFAULT_LEADERBOARD_RUN_ID)
     parser.add_argument(
         "--leaderboard-tracking-uri",
         help="where the leaderboard run lives, if not the tracking store (for dry runs)",

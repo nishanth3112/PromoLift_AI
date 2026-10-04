@@ -52,6 +52,7 @@ class Experiment(StrEnum):
     FEATURE_ABLATION = "promolift-feature-ablation"
     UPLIFT_MODELS = "promolift-uplift-models"
     FINAL_EVALUATION = "promolift-final-evaluation"
+    TARGETING = "promolift-targeting"
 
 
 @dataclass(frozen=True)
