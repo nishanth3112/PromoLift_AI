@@ -178,7 +178,8 @@ def _plotted(ranked: Sequence[TrainedModel]) -> list[TrainedModel]:
     return [r for r in ranked if r.name in chosen]
 
 
-def _leaderboard_row(result: TrainedModel) -> dict:
+def leaderboard_row(result: TrainedModel) -> dict:
+    """One evaluated variant as a flat row: estimates, CIs, and noise-floor verdicts."""
     report = result.report
     row: dict = {"model": result.name, "base_model": result.model_name, "variant": result.variant}
     intervals = {
@@ -203,7 +204,8 @@ def _leaderboard_row(result: TrainedModel) -> dict:
     return row
 
 
-def _comparison_record(a: str, b: str, comparison: PairedComparison) -> dict:
+def comparison_record(a: str, b: str, comparison: PairedComparison) -> dict:
+    """A paired comparison of ``a`` minus ``b`` as a JSON-serializable record."""
     return {
         "model_a": a,
         "model_b": b,
@@ -275,7 +277,7 @@ def log_leaderboard(
             n_bootstrap=n_bootstrap,
             seed=seed,
         )
-        records.append(_comparison_record(a, b, comparison))
+        records.append(comparison_record(a, b, comparison))
         comparison_metrics[f"qini_diff_{a}_vs_{b}"] = comparison.qini_auc.difference
         comparison_metrics[f"qini_win_rate_{a}_vs_{b}"] = comparison.qini_auc.win_rate
 
@@ -297,7 +299,7 @@ def log_leaderboard(
         mlflow.log_metrics(
             {f"best_{val.split}_qini_auc": best.report.metrics.qini_auc, **comparison_metrics}
         )
-        table = pl.DataFrame([_leaderboard_row(r) for r in ranked])
+        table = pl.DataFrame([leaderboard_row(r) for r in ranked])
         mlflow.log_text(table.write_csv(), "leaderboard/leaderboard.csv")
         mlflow.log_dict(records, "leaderboard/paired_comparisons.json")
         effect = tuning_effect_table(records, by_name)
