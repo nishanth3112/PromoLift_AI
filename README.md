@@ -228,6 +228,10 @@ Results:
 - [docs/feature_engineering_results.md](docs/feature_engineering_results.md) —
   47 new features in four groups don't beat the 19 base features, even with
   hyperparameters re-tuned for them; the models keep the base features.
+- [docs/final_results.md](docs/final_results.md) — the one-time test
+  evaluation: the chosen model clearly beats likely-buyer targeting and
+  modestly beats random targeting (test Qini +0.0078); these are the numbers
+  to quote.
 
 Models aren't stored: every run is reproducible from its commit, split hash,
 and seed. The test split can't be loaded for training or evaluation outside
