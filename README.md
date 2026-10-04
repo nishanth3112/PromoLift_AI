@@ -228,10 +228,53 @@ Results:
 - [docs/feature_engineering_results.md](docs/feature_engineering_results.md) —
   47 new features in four groups don't beat the 19 base features, even with
   hyperparameters re-tuned for them; the models keep the base features.
+- [docs/final_results.md](docs/final_results.md) — the one-time test
+  evaluation: the chosen model clearly beats likely-buyer targeting and
+  modestly beats random targeting (test Qini +0.0078); these are the numbers
+  to quote.
 
 Models aren't stored: every run is reproducible from its commit, split hash,
 and seed. The test split can't be loaded for training or evaluation outside
 the final evaluation.
+
+### Final evaluation
+
+The test split is evaluated exactly once. `scripts/final_evaluation.py` chooses
+the final model from the validation leaderboard by a rule fixed before test is
+seen (`models/selection.py`: among uplift variants whose paired Qini CI with
+the best includes zero, the cheapest to fit), refits it and the reference
+models (`s_learner_tuned`, `causal_forest`, `response`, `random`) on
+train + val with the leaderboard's parameters, and scores them on test in one
+run in `promolift-final-evaluation`. The references are context only; the
+choice is never changed after test is seen.
+
+The official run refuses to start from a dirty or untracked working tree, a
+non-shared tracking store, or a split or raw data that differ from the
+leaderboard run's. It also refuses if a final evaluation already exists for
+the split. There is no override; a failed run can only be redone by deleting
+it in MLflow by hand. Models are fitted before the run opens, and test is
+loaded only after, so any look at test is on record.
+
+```bash
+uv run --env-file .env python scripts/final_evaluation.py
+```
+
+`--dry-run` takes the same path on train -> val (test is never loaded, the
+guard doesn't apply) and prints the leaderboard's val Qini beside each model,
+which a correct pipeline reproduces. As a wiring check it defaults to 20
+bootstrap resamples and 20 noise-floor rankings (the point estimates don't
+depend on them). Log it to a scratch store and read the leaderboard from
+Databricks:
+
+```bash
+MLFLOW_TRACKING_URI=sqlite:///<scratch>/mlflow.db uv run python scripts/final_evaluation.py \
+  --dry-run --leaderboard-tracking-uri databricks://promolift
+```
+
+Options: `--leaderboard-run` (default: the Phase 10 leaderboard run),
+`--references`, `--n-bootstrap`, `--n-rankings`, `--seed`, and `--workers`
+(bootstrap evaluations run in parallel processes, default every core, with
+results identical to a sequential run).
 
 ## Status
 

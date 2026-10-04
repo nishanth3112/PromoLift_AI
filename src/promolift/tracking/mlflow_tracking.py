@@ -51,6 +51,7 @@ class Experiment(StrEnum):
     MODEL_TUNING = "promolift-model-tuning"
     FEATURE_ABLATION = "promolift-feature-ablation"
     UPLIFT_MODELS = "promolift-uplift-models"
+    FINAL_EVALUATION = "promolift-final-evaluation"
 
 
 @dataclass(frozen=True)
