@@ -25,6 +25,8 @@ from promolift.models.base import Params
 from promolift.models.training import ModelSpec
 from promolift.tracking.mlflow_tracking import TrackingConfig, default_tracking_config
 
+# The Phase 10 validation leaderboard (docs/advanced_models_results.md).
+DEFAULT_LEADERBOARD_RUN_ID = "6fc6717a9b6a46d5b112c83120f2694d"
 # Base models that are reference rankings, not uplift models.
 REFERENCE_BASE_MODELS = frozenset({"random", "response"})
 SELECTION_RULE = "cheapest_tied_with_best"

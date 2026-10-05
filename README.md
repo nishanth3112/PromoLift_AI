@@ -276,6 +276,49 @@ Options: `--leaderboard-run` (default: the Phase 10 leaderboard run),
 (bootstrap evaluations run in parallel processes, default every core, with
 results identical to a sequential run).
 
+## Budget targeting
+
+`scripts/targeting_analysis.py` turns the chosen model's ranking into a send
+list: how deep to text down it for the most profit. Texting the top share `k`
+of clients earns `k × (margin × uplift@k − SMS cost)` per client, so the best
+depth depends only on the **break-even uplift** = SMS cost / margin per extra
+purchase: keep texting while the next clients' uplift exceeds it.
+
+- Every train + val client is scored out of fold (5-fold CV, ranks pooled
+  across folds), alongside the `response` and `random` rankings; test is never
+  loaded.
+- Profit per 1,000 clients is computed at every depth from 0% to 100%, with
+  bootstrap CIs (`optimization/targeting.py`).
+- The decision is the depth with the **highest expected profit**; depth 0
+  (text nobody) is always a candidate. The shallowest depth whose profit is
+  statistically tied with it (paired bootstrap) is reported as a lower-spend
+  option, not the decision: the tied range is wide, and its shallow end can
+  earn less than texting everyone when SMS is cheap.
+- A sensitivity table repeats the decision for each break-even uplift in the
+  config, so it answers for any real cost and margin without a re-run.
+
+The economics live in `configs/business.yaml`; every value there is a
+placeholder assumption until the business confirms it:
+
+| Key | Meaning |
+|---|---|
+| `currency` | Label for money values |
+| `sms_cost` | Cost per SMS |
+| `gross_margin` | Fraction of basket value kept as profit |
+| `margin_per_purchase` | Profit per extra purchase; `null` = average transaction in `purchases.csv` × `gross_margin` |
+| `budget`, `campaign_clients` | Optional budget cap and the clients it covers (set both or neither) |
+| `break_even_grid` | Break-even uplifts for the sensitivity table |
+
+```bash
+uv run --env-file .env python scripts/targeting_analysis.py   # a few minutes
+```
+
+Logs one run to `promolift-targeting` (decision, profit curves, sensitivity
+table, plot). Results: [docs/targeting_results.md](docs/targeting_results.md)
+— with the placeholder economics, texting the top 38% earns ~3× texting
+everyone, and the response model loses money at every depth up to 50%. Options: `--references`, `--n-folds`, `--n-bootstrap`, `--seed`,
+`--leaderboard-run`, `--leaderboard-tracking-uri`.
+
 ## Status
 
 Under active development.
