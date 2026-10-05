@@ -18,8 +18,8 @@ artifacts:
     path: .
 
 sync:
-  # The job needs only configs/business.yaml from the synced files (the code
-  # ships in the wheel).
+  # The job needs only configs/business.yaml and configs/monitoring.yaml from
+  # the synced files (the code ships in the wheel).
   exclude:
     - notebooks/**
     - tests/**
@@ -35,6 +35,9 @@ variables:
   latest_view:
     description: View showing only the most recent batch.
     default: promolift_ai.scoring.targets_latest
+  drift_table:
+    description: Delta table each batch's per-feature drift report is appended to.
+    default: promolift_ai.scoring.drift
   experiment_root:
     description: Workspace folder of the MLflow experiments.
     default: /Shared/promolift
@@ -78,6 +81,10 @@ resources:
               - ${var.targets_table}
               - --latest-view
               - ${var.latest_view}
+              - --drift-table
+              - ${var.drift_table}
+              - --monitoring-config
+              - ${workspace.file_path}/configs/monitoring.yaml
               - --experiment-root
               - ${var.experiment_root}
               - --git-commit

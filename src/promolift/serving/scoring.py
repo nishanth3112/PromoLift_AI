@@ -10,6 +10,11 @@ Each batch is one row per client: uplift score, rank (1 = highest), decile
 (1 = top 10%), the send flag, and the model version, scoring time, and run
 that produced it. Batches are written as separate files and never
 overwritten, so every past decision can be compared with what happened.
+
+Before scoring, the batch's features are checked for drift against the
+champion's training reference (``monitoring.drift``). Every feature's PSI is
+logged; past the failure threshold the run fails before any send list is
+written.
 """
 
 from __future__ import annotations
@@ -27,6 +32,14 @@ import polars as pl
 from mlflow import MlflowClient
 
 from promolift.data.loader import project_root
+from promolift.monitoring.drift import (
+    DriftError,
+    DriftStatus,
+    DriftThresholds,
+    check_reference,
+    drift_report,
+    overall_status,
+)
 from promolift.serving.pyfunc import ContractError, FeatureContract
 from promolift.serving.registration import CHAMPION_ALIAS, DEFAULT_MODEL_NAME, registry_uri_for
 from promolift.tracking.mlflow_tracking import (
@@ -52,12 +65,13 @@ SEND_LIST_COLUMNS = (
 
 @dataclass(frozen=True)
 class ChampionModel:
-    """The champion resolved to one version, loaded, with its feature contract."""
+    """The champion resolved to one version, loaded, with its contract and drift reference."""
 
     name: str
     version: str
     model: mlflow.pyfunc.PyFuncModel
     contract: FeatureContract
+    drift_reference: dict | None
 
 
 def load_champion(
@@ -71,7 +85,10 @@ def load_champion(
     mlflow.set_tracking_uri(config.tracking_uri)
     mlflow.set_registry_uri(registry_uri)
     model = mlflow.pyfunc.load_model(f"models:/{name}/{version}")
-    return ChampionModel(name, version, model, model.unwrap_python_model().contract)
+    wrapper = model.unwrap_python_model()
+    # Versions registered before drift references existed load without one.
+    reference = getattr(wrapper, "drift_reference", None)
+    return ChampionModel(name, version, model, wrapper.contract, reference)
 
 
 def model_input(features: pl.DataFrame, contract: FeatureContract) -> pd.DataFrame:
@@ -159,6 +176,36 @@ class ScoringResult:
     model_version: str
     targets: pl.DataFrame
     path: Path
+    drift: pl.DataFrame
+
+
+def drift_rows(
+    report: pl.DataFrame,
+    *,
+    model_name: str,
+    model_version: str,
+    scored_at: datetime,
+    scoring_run_id: str,
+) -> pl.DataFrame:
+    """A drift report with the batch's provenance, as stored in the job's drift table."""
+    return report.with_columns(
+        pl.lit(model_name).alias("model_name"),
+        pl.lit(model_version).alias("model_version"),
+        pl.lit(scored_at).dt.replace_time_zone("UTC").alias("scored_at"),
+        pl.lit(scoring_run_id).alias("scoring_run_id"),
+    )
+
+
+def _log_drift(report: pl.DataFrame, status: DriftStatus, thresholds: DriftThresholds) -> None:
+    mlflow.set_tags({"drift_status": status.value})
+    mlflow.log_params(
+        {"drift_warn_psi": thresholds.warn_psi, "drift_fail_psi": thresholds.fail_psi}
+    )
+    mlflow.log_metrics(
+        {"drift_max_psi": float(report["psi"].max())}
+        | {f"psi_{row['feature']}": row["psi"] for row in report.iter_rows(named=True)}
+    )
+    mlflow.log_text(report.write_csv(), "drift/drift_report.csv")
 
 
 def run_batch_scoring(
@@ -172,12 +219,15 @@ def run_batch_scoring(
     lineage: dict[str, Path] | None = None,
     tags: dict[str, str] | None = None,
     sink: Callable[[pl.DataFrame], None] | None = None,
+    drift_thresholds: DriftThresholds | None = None,
+    drift_sink: Callable[[pl.DataFrame], None] | None = None,
 ) -> ScoringResult:
-    """Score every client in ``features`` with the champion, in one MLflow run.
+    """Check drift, then score every client in ``features`` with the champion, in one run.
 
     The batch is written to ``output_dir/send_list_<timestamp>_<run>.parquet``
     (gitignored ``data/interim/scoring`` by default); the run records the
-    model version, counts, and a per-decile summary, not the client list.
+    model version, counts, a per-decile summary, and every feature's PSI --
+    not the client list.
 
     Args:
         features: One row per client: ``client_id`` plus the contract columns
@@ -188,14 +238,22 @@ def run_batch_scoring(
         tags: Extra run tags.
         sink: Also writes the batch elsewhere (the job's Delta table). Called
             inside the run, so a failed write fails the run.
+        drift_thresholds: PSI thresholds (``configs/monitoring.yaml``).
+        drift_sink: Also writes the drift report (the job's drift table) --
+            before a severe drift fails the run, so failures are recorded too.
+
+    Raises:
+        ValueError: If the champion has no drift reference with bin shares.
+        DriftError: If any feature drifts past ``drift_thresholds.fail_psi``;
+            the run is recorded as failed and no send list is written.
     """
     config = config if config is not None else default_tracking_config()
     output_dir = output_dir if output_dir is not None else project_root() / SCORING_OUTPUT_DIR
     scored_at = scored_at if scored_at is not None else datetime.now(tz=UTC)
+    thresholds = drift_thresholds if drift_thresholds is not None else DriftThresholds()
     champion = load_champion(model_name, config)
-    scores = np.asarray(
-        champion.model.predict(model_input(features, champion.contract)), dtype=float
-    )
+    reference = check_reference(champion.drift_reference)
+    inputs = model_input(features, champion.contract)
 
     with start_run(
         Experiment.SCORING,
@@ -210,6 +268,27 @@ def run_batch_scoring(
         config=config,
         **(lineage or {}),
     ) as run:
+        report = drift_report(inputs, reference, thresholds)
+        status = overall_status(report)
+        _log_drift(report, status, thresholds)
+        drift = drift_rows(
+            report,
+            model_name=model_name,
+            model_version=champion.version,
+            scored_at=scored_at,
+            scoring_run_id=run.info.run_id,
+        )
+        if drift_sink is not None:
+            drift_sink(drift)
+        if status is DriftStatus.FAIL:
+            failing = report.filter(pl.col("status") == DriftStatus.FAIL.value)["feature"]
+            msg = (
+                f"Features drifted past PSI {thresholds.fail_psi}: {', '.join(failing)}; "
+                "no send list written"
+            )
+            raise DriftError(msg)
+
+        scores = np.asarray(champion.model.predict(inputs), dtype=float)
         targets = send_list(
             features["client_id"],
             scores,
@@ -238,4 +317,4 @@ def run_batch_scoring(
             }
         )
         mlflow.log_text(decile_summary(targets).write_csv(), "scoring/decile_summary.csv")
-        return ScoringResult(run.info.run_id, champion.version, targets, path)
+        return ScoringResult(run.info.run_id, champion.version, targets, path, drift)

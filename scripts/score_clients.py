@@ -2,10 +2,13 @@
 
 Builds the base features for every client in ``clients.csv``, loads
 ``promolift_ai.models.uplift_targeting@champion`` (resolved to one version),
-scores and ranks every client, and flags the top ``send_share`` of
-``configs/business.yaml`` to text. The batch is written to the gitignored
-``data/interim/scoring/`` (never overwriting earlier batches) and recorded as
-a run in ``promolift-scoring``:
+and first checks the batch's features for drift against the champion's
+training reference (thresholds in ``configs/monitoring.yaml``): severe drift
+stops the run before any send list is written. It then scores and ranks
+every client and flags the top ``send_share`` of ``configs/business.yaml`` to
+text. The batch is written to the gitignored ``data/interim/scoring/``
+(never overwriting earlier batches) and recorded as a run in
+``promolift-scoring``:
 
     uv run --env-file .env python scripts/score_clients.py
 
@@ -20,10 +23,13 @@ import sys
 from pathlib import Path
 
 from promolift.models.dataset import build_model_features
+from promolift.monitoring.drift import DriftError, load_drift_thresholds
 from promolift.optimization.business import load_business_config
 from promolift.serving.registration import DEFAULT_MODEL_NAME
 from promolift.serving.scoring import decile_summary, run_batch_scoring
 from promolift.tracking.mlflow_tracking import default_tracking_config
+
+_SHOWN_FEATURES = 5
 
 
 def main() -> int:
@@ -36,6 +42,7 @@ def main() -> int:
     if config.send_share is None:
         print("REFUSED -- set send_share in configs/business.yaml (from the targeting analysis).")
         return 1
+    thresholds = load_drift_thresholds()
     tracking = default_tracking_config()
     if tracking.artifact_root is not None:
         print(
@@ -46,17 +53,29 @@ def main() -> int:
     features = build_model_features()
     print(f"  {features.height:,} clients")
 
-    print(f"Scoring with {args.model_name}@champion...")
-    result = run_batch_scoring(
-        features,
-        send_share=config.send_share,
-        model_name=args.model_name,
-        output_dir=args.output_dir,
-        config=tracking,
+    print(f"Checking drift and scoring with {args.model_name}@champion...")
+    try:
+        result = run_batch_scoring(
+            features,
+            send_share=config.send_share,
+            model_name=args.model_name,
+            output_dir=args.output_dir,
+            config=tracking,
+            drift_thresholds=thresholds,
+        )
+    except DriftError as error:
+        print(f"\nSTOPPED -- {error}. See drift/drift_report.csv in the scoring run.")
+        return 1
+
+    print(
+        f"\nDrift vs the training reference (PSI; warn > {thresholds.warn_psi}, "
+        f"fail > {thresholds.fail_psi}), largest first:"
     )
+    for row in result.drift.head(_SHOWN_FEATURES).iter_rows(named=True):
+        print(f"  {row['feature']:24s} {row['psi']:.4f}  {row['status']}")
     sent = int(result.targets["send"].sum())
     print(
-        f"  model version {result.model_version}: {result.targets.height:,} clients scored, "
+        f"\nModel version {result.model_version}: {result.targets.height:,} clients scored, "
         f"{sent:,} flagged to text (top {config.send_share:.0%})"
     )
     print("\nBy decile (1 = highest predicted uplift):")

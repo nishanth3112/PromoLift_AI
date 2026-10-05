@@ -9,12 +9,8 @@ import pytest
 from mlflow import MlflowClient
 
 from promolift.models.registry import build_model
-from promolift.serving.pyfunc import (
-    ContractError,
-    FeatureContract,
-    UpliftPyfunc,
-    drift_reference,
-)
+from promolift.monitoring.drift import REFERENCE_VERSION
+from promolift.serving.pyfunc import ContractError, FeatureContract, UpliftPyfunc
 from promolift.serving.registration import (
     CHAMPION_ALIAS,
     ParityError,
@@ -131,26 +127,6 @@ def test_contract_rejects_unsupported_training_columns() -> None:
         FeatureContract.from_frame(pd.DataFrame({"name": ["a", "b"]}))
 
 
-def test_drift_reference_summarizes_each_feature(trained) -> None:
-    _, features = trained
-    contract = FeatureContract.from_frame(features)
-
-    reference = drift_reference(features, contract)
-
-    assert reference["n_clients"] == len(features)
-    numeric = reference["features"]["monetary_avg"]
-    assert numeric["kind"] == "numeric"
-    assert numeric["null_share"] == pytest.approx(features["monetary_avg"].isna().mean())
-    quantiles = list(numeric["quantiles"].values())
-    assert len(quantiles) == 11
-    assert quantiles == sorted(quantiles)
-    gender = reference["features"]["gender"]
-    assert gender["kind"] == "categorical"
-    assert set(gender["shares"]) == {"F", "M", "U"}
-    assert gender["shares"]["U"] == 0
-    assert sum(gender["shares"].values()) == pytest.approx(1.0)
-
-
 def test_pyfunc_predicts_through_the_contract(trained) -> None:
     model, features = trained
     contract = FeatureContract.from_frame(features)
@@ -193,6 +169,26 @@ def test_logs_the_model_contract_and_drift_reference(packaged, config: TrackingC
 
 def test_the_reloaded_model_scores_identically(packaged) -> None:
     check_reload_parity(packaged)
+
+
+def test_the_reloaded_model_carries_its_drift_reference(packaged, trained) -> None:
+    _, features = trained
+
+    wrapper = mlflow.pyfunc.load_model(packaged.model_uri).unwrap_python_model()
+
+    reference = wrapper.drift_reference
+    assert reference["version"] == REFERENCE_VERSION
+    assert reference["n_clients"] == len(features)
+    specs = reference["features"]
+    assert list(specs) == list(packaged.contract.columns)
+    assert specs["monetary_avg"]["binning"] == "quantile"
+    assert specs["monetary_avg"]["null_share"] == pytest.approx(
+        features["monetary_avg"].isna().mean()
+    )
+    assert specs["has_redeemed"]["binning"] == "values"
+    assert specs["gender"]["levels"] == ["F", "M", "U"]
+    for spec in specs.values():
+        assert sum(spec["expected_shares"]) == pytest.approx(1.0)
 
 
 def test_the_reloaded_model_accepts_missing_values(packaged) -> None:

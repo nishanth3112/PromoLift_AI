@@ -28,6 +28,7 @@ from typing import Any
 import polars as pl
 
 from promolift.models.dataset import build_model_features
+from promolift.monitoring.drift import DriftThresholds, load_drift_thresholds
 from promolift.optimization.business import load_business_config
 from promolift.serving.registration import DEFAULT_MODEL_NAME
 from promolift.serving.scoring import ScoringResult, run_batch_scoring
@@ -35,6 +36,7 @@ from promolift.tracking.mlflow_tracking import TrackingConfig
 
 DEFAULT_TABLE = "promolift_ai.scoring.targets"
 DEFAULT_LATEST_VIEW = "promolift_ai.scoring.targets_latest"
+DEFAULT_DRIFT_TABLE = "promolift_ai.scoring.drift"
 _THREE_LEVEL_NAME = re.compile(r"^[A-Za-z0-9_]+\.[A-Za-z0-9_]+\.[A-Za-z0-9_]+$")
 _LATEST_VIEW_SQL = (
     "CREATE OR REPLACE VIEW {view} "
@@ -67,6 +69,12 @@ def write_targets(
     spark.sql(_LATEST_VIEW_SQL.format(view=latest_view, table=table))
 
 
+def write_drift(drift: pl.DataFrame, *, table: str, git_commit: str, spark: Any) -> None:
+    """Append a batch's per-feature drift report (``scoring.drift_rows``) to ``table``."""
+    rows = drift.with_columns(pl.lit(git_commit).alias("deployed_git_commit")).to_pandas()
+    spark.createDataFrame(rows).write.mode("append").saveAsTable(_checked_name(table))
+
+
 def run_job(
     raw_dir: Path,
     business_config: Path,
@@ -74,15 +82,21 @@ def run_job(
     model_name: str = DEFAULT_MODEL_NAME,
     table: str = DEFAULT_TABLE,
     latest_view: str = DEFAULT_LATEST_VIEW,
+    drift_table: str = DEFAULT_DRIFT_TABLE,
+    drift_thresholds: DriftThresholds | None = None,
     git_commit: str = "unknown",
     tracking: TrackingConfig,
     spark: Any,
     output_dir: Path | None = None,
 ) -> ScoringResult:
-    """Build features from ``raw_dir``, score with the champion, write the batch to ``table``.
+    """Build features from ``raw_dir``, check drift, score, write the batch to ``table``.
+
+    The drift report is appended to ``drift_table`` even when severe drift
+    stops the batch.
 
     Raises:
         ValueError: If the business config has no ``send_share``.
+        DriftError: If the batch drifts past the failure threshold.
     """
     config = load_business_config(business_config)
     if config.send_share is None:
@@ -99,6 +113,8 @@ def run_job(
         sink=partial(
             write_targets, table=table, latest_view=latest_view, git_commit=git_commit, spark=spark
         ),
+        drift_thresholds=drift_thresholds,
+        drift_sink=partial(write_drift, table=drift_table, git_commit=git_commit, spark=spark),
     )
 
 
@@ -109,6 +125,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--model-name", default=DEFAULT_MODEL_NAME)
     parser.add_argument("--table", default=DEFAULT_TABLE)
     parser.add_argument("--latest-view", default=DEFAULT_LATEST_VIEW)
+    parser.add_argument("--drift-table", default=DEFAULT_DRIFT_TABLE)
+    parser.add_argument(
+        "--monitoring-config", type=Path, help="drift thresholds; default warn 0.1, fail 0.25"
+    )
     parser.add_argument("--git-commit", default="unknown")
     parser.add_argument("--tracking-uri", default="databricks")
     parser.add_argument("--experiment-root", default="/Shared/promolift")
@@ -126,12 +146,18 @@ def main(argv: Sequence[str] | None = None) -> None:
         model_name=args.model_name,
         table=args.table,
         latest_view=args.latest_view,
+        drift_table=args.drift_table,
+        drift_thresholds=(
+            load_drift_thresholds(args.monitoring_config) if args.monitoring_config else None
+        ),
         git_commit=args.git_commit,
         tracking=TrackingConfig(args.tracking_uri, experiment_root=args.experiment_root),
         spark=SparkSession.builder.getOrCreate(),
     )
     sent = int(result.targets["send"].sum())
+    worst = result.drift.row(0, named=True)
     print(
+        f"Drift: max PSI {worst['psi']:.4f} ({worst['feature']}, {worst['status']}). "
         f"Model version {result.model_version}: {result.targets.height:,} clients scored, "
         f"{sent:,} flagged; appended to {args.table}; run {result.run_id}"
     )

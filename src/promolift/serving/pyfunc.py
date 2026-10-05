@@ -12,13 +12,13 @@ numeric columns as float64, categorical columns as strings. MLflow's
 signature check refuses implicit int -> float conversion, so batch scoring
 must build that format; ``prepare`` then restores the training dtypes.
 
-``drift_reference`` summarizes the training clients per feature (deciles,
-null share, category shares) so later batches can be compared against them.
+The wrapper also carries the training clients' drift reference
+(``monitoring.drift.build_reference``), so whoever loads the model can check
+a scoring batch against the data it was trained on.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from dataclasses import dataclass
 
 import mlflow
@@ -26,8 +26,6 @@ import numpy as np
 import pandas as pd
 
 from promolift.models.base import UpliftModel
-
-DRIFT_QUANTILES = tuple(round(q / 10, 1) for q in range(11))
 
 
 class ContractError(ValueError):
@@ -119,49 +117,19 @@ class FeatureContract:
         return pd.DataFrame(result, index=frame.index)
 
 
-def drift_reference(
-    features: pd.DataFrame,
-    contract: FeatureContract,
-    *,
-    quantiles: Sequence[float] = DRIFT_QUANTILES,
-) -> dict:
-    """Per-feature distribution of the training clients, to compare scoring batches against.
-
-    Numeric features keep their quantiles (deciles by default), mean, and null
-    share; categorical features keep each level's share of non-null values.
-    """
-    prepared = contract.prepare(features)
-    summary: dict = {"n_clients": len(prepared), "features": {}}
-    for column in contract.columns:
-        values = prepared[column]
-        null_share = float(values.isna().mean())
-        if column in contract.categories:
-            shares = values.value_counts(normalize=True, dropna=True)
-            summary["features"][column] = {
-                "kind": "categorical",
-                "null_share": null_share,
-                "shares": {
-                    level: float(shares.get(level, 0.0)) for level in contract.categories[column]
-                },
-            }
-        else:
-            present = values.dropna()
-            cuts = np.quantile(present, quantiles) if len(present) else []
-            summary["features"][column] = {
-                "kind": "numeric",
-                "null_share": null_share,
-                "mean": float(present.mean()) if len(present) else None,
-                "quantiles": {str(q): float(v) for q, v in zip(quantiles, cuts, strict=False)},
-            }
-    return summary
-
-
 class UpliftPyfunc(mlflow.pyfunc.PythonModel):
-    """MLflow wrapper: checks the input against the contract, returns one uplift score per row."""
+    """MLflow wrapper: checks the input against the contract, returns one uplift score per row.
 
-    def __init__(self, model: UpliftModel, contract: FeatureContract) -> None:
+    ``drift_reference`` is the training clients' binned feature distribution;
+    versions registered before it existed load with ``None``.
+    """
+
+    def __init__(
+        self, model: UpliftModel, contract: FeatureContract, drift_reference: dict | None = None
+    ) -> None:
         self.model = model
         self.contract = contract
+        self.drift_reference = drift_reference
 
     def predict(
         self,

@@ -10,6 +10,7 @@ import yaml
 from mlflow import MlflowClient
 from packaging.requirements import Requirement
 
+from promolift.monitoring.drift import DriftError, load_drift_thresholds
 from promolift.serving.job import (
     DEFAULT_LATEST_VIEW,
     DEFAULT_TABLE,
@@ -107,7 +108,7 @@ def _business_config(tmp_path: Path, send_share: str) -> Path:
     return path
 
 
-def test_run_job_scores_the_raw_data_and_writes_the_table(
+def test_run_job_scores_the_raw_data_and_writes_both_tables(
     scoring_champion, feature_raw_dir: Path, tmp_path: Path
 ) -> None:
     spark = FakeSpark()
@@ -118,14 +119,19 @@ def test_run_job_scores_the_raw_data_and_writes_the_table(
         model_name=scoring_champion.name,
         table="cat.sch.targets",
         latest_view="cat.sch.latest",
+        drift_table="cat.sch.drift",
         git_commit="abc123",
         tracking=scoring_champion.config,
         spark=spark,
         output_dir=tmp_path / "out",
     )
 
-    assert spark.writes == [("append", "cat.sch.targets")]
-    written = spark.frames[0]
+    # The drift report is written first, so it is recorded even if scoring stops.
+    assert spark.writes == [("append", "cat.sch.drift"), ("append", "cat.sch.targets")]
+    drift, written = spark.frames
+    assert set(drift["feature"]) == set(scoring_champion.packaged.contract.columns)
+    assert set(drift["scoring_run_id"]) == {result.run_id}
+    assert set(drift["deployed_git_commit"]) == {"abc123"}
     assert len(written) == 2
     assert written["send"].sum() == 1
     assert set(written["scoring_run_id"]) == {result.run_id}
@@ -170,3 +176,37 @@ def test_the_wheel_accepts_the_serverless_core_package_versions() -> None:
         assert requirements[package].specifier.contains(version), (
             f"{package} {requirements[package].specifier} excludes serverless {version}"
         )
+
+
+def test_a_drifted_batch_writes_its_drift_report_but_no_send_list(
+    scoring_champion, feature_raw_dir: Path, tmp_path: Path
+) -> None:
+    spark = FakeSpark()
+    config = tmp_path / "monitoring.yaml"
+    config.write_text("drift:\n  warn_psi: 0.0\n  fail_psi: 0.0\n")
+
+    with pytest.raises(DriftError):
+        run_job(
+            feature_raw_dir,
+            _business_config(tmp_path, "0.5"),
+            model_name=scoring_champion.name,
+            table="cat.sch.targets",
+            latest_view="cat.sch.latest",
+            drift_table="cat.sch.drift",
+            drift_thresholds=load_drift_thresholds(config),
+            tracking=scoring_champion.config,
+            spark=spark,
+            output_dir=tmp_path / "out",
+        )
+
+    assert spark.writes == [("append", "cat.sch.drift")]
+    assert spark.statements == []
+
+
+def test_parse_args_takes_the_drift_table_and_monitoring_config() -> None:
+    args = parse_args(
+        ["--raw-dir", "/r", "--business-config", "/b.yaml", "--monitoring-config", "/m.yaml"]
+    )
+
+    assert args.drift_table == "promolift_ai.scoring.drift"
+    assert args.monitoring_config == Path("/m.yaml")

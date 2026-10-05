@@ -112,7 +112,7 @@ def make_training_frame() -> Callable[[pl.DataFrame, int, int], pd.DataFrame]:
     """Training rows in the layout of ``client_features``, converted as ``model_frame`` does."""
 
     def make(features: pl.DataFrame, n: int, seed: int) -> pd.DataFrame:
-        rng = np.random.default_rng(seed)
+        # Rows resampled from the clients, so a batch of those clients doesn't drift.
         base = (
             features.drop("client_id")
             .with_columns(pl.col(pl.Boolean).cast(pl.Int8))
@@ -120,7 +120,7 @@ def make_training_frame() -> Callable[[pl.DataFrame, int, int], pd.DataFrame]:
             .sample(n, replace=True, random_state=seed)
             .reset_index(drop=True)
         )
-        base["gender"] = pd.Categorical(rng.choice(["F", "M", "U"], n), categories=["F", "M", "U"])
+        base["gender"] = pd.Categorical(base["gender"], categories=["F", "M", "U"])
         return base
 
     return make

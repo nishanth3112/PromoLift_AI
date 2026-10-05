@@ -1,0 +1,11 @@
+# Monitoring thresholds (src/promolift/monitoring/).
+#
+# Drift: every scoring batch is compared, feature by feature, with the
+# champion model's training reference using the population stability index
+# (PSI). Common reading: < 0.1 stable, 0.1-0.25 a shift worth a look,
+# > 0.25 a significant shift.
+drift:
+  # Any feature above this tags the scoring run drift_status=warn.
+  warn_psi: 0.1
+  # Any feature above this fails the run before a send list is written.
+  fail_psi: 0.25
