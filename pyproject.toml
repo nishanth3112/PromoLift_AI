@@ -7,14 +7,19 @@ requires-python = ">=3.12,<3.13"
 # What the installed package needs to load data, build features, and score with
 # a registered model -- what the wheel declares, e.g. for the Databricks scoring
 # job. Research-only libraries are in the `research` dependency group below.
+#
+# numpy, pandas, and pyarrow are core packages of Databricks serverless compute:
+# a job may not change their versions. Keep their lower bounds at or below
+# serverless environment version 4 (numpy 2.1.3, pandas 2.2.3, pyarrow 19.0.1);
+# tests/unit/test_job.py enforces this.
 dependencies = [
     "lightgbm>=4.7.0",
     "mlflow>=3.16.1",
-    "numpy>=2.5.3",
-    "pandas<3",
+    "numpy>=2.1",
+    "pandas>=2.2,<3",
     "pandera>=0.33.1",
     "polars>=1.44.2",
-    "pyarrow>=25.0.1",
+    "pyarrow>=19",
     "pyyaml>=6.0.3",
     # <1.10: scikit-uplift 0.5.1 calls sklearn.utils.extmath.stable_cumsum,
     # deprecated in 1.8 and removed in 1.10 -- every uplift metric would break.

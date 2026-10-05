@@ -1,11 +1,14 @@
 """Unit tests for the Databricks scoring job: table writes, arguments, and an end-to-end run."""
 
+import tomllib
 from pathlib import Path
 
 import pandas as pd
 import polars as pl
 import pytest
+import yaml
 from mlflow import MlflowClient
+from packaging.requirements import Requirement
 
 from promolift.serving.job import (
     DEFAULT_LATEST_VIEW,
@@ -140,4 +143,30 @@ def test_run_job_needs_a_send_share(feature_raw_dir: Path, tmp_path: Path) -> No
             _business_config(tmp_path, "null"),
             tracking=None,
             spark=FakeSpark(),
+        )
+
+
+# Core packages of the job's serverless environment, which a job may not change
+# (Databricks rejects the install). Update together with environment_version.
+_REPO = Path(__file__).resolve().parents[2]
+_SERVERLESS_ENVIRONMENT = "4"
+_SERVERLESS_CORE = {"numpy": "2.1.3", "pandas": "2.2.3", "pyarrow": "19.0.1"}
+
+
+def test_the_job_runs_on_the_serverless_environment_these_tests_assume() -> None:
+    bundle = yaml.safe_load((_REPO / "databricks.yml").read_text())
+
+    (environment,) = bundle["resources"]["jobs"]["score_clients"]["environments"]
+    assert environment["spec"]["environment_version"] == _SERVERLESS_ENVIRONMENT
+
+
+def test_the_wheel_accepts_the_serverless_core_package_versions() -> None:
+    # A lower bound above the environment's version makes pip replace a core
+    # package, and the job fails before running (ERROR_CORE_PACKAGE_VERSION_CHANGE).
+    project = tomllib.loads((_REPO / "pyproject.toml").read_text())["project"]
+    requirements = {Requirement(r).name: Requirement(r) for r in project["dependencies"]}
+
+    for package, version in _SERVERLESS_CORE.items():
+        assert requirements[package].specifier.contains(version), (
+            f"{package} {requirements[package].specifier} excludes serverless {version}"
         )

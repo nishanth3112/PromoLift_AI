@@ -57,7 +57,10 @@ resources:
       environments:
         - environment_key: scoring
           spec:
-            environment_version: "3"
+            # Python 3.12 with numpy 2.1.3 / pandas 2.2.3 / pyarrow 19.0.1, the
+            # serverless core packages the wheel's lower bounds must not exceed
+            # (pyproject.toml; checked by tests/unit/test_job.py).
+            environment_version: "4"
             dependencies:
               - ./dist/*.whl
       tasks:
