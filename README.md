@@ -355,6 +355,45 @@ Against Databricks the working tree must be clean. Registering needs
 `promolift_ai.models`. Options: `--model-name`, `--set-champion`,
 `--leaderboard-run`, `--leaderboard-tracking-uri`, `--seed`.
 
+## Batch scoring
+
+`scripts/score_clients.py` turns the champion model into a send list for the
+whole client base:
+
+1. builds the base features for every client in `clients.csv` (~400k, not
+   only the experiment's 200k);
+2. resolves `promolift_ai.models.uplift_targeting@champion` to one version
+   and loads that version, so a batch never mixes models;
+3. converts the features to the model's canonical input
+   (`serving/scoring.py: model_input`, booleans to 0/1 as in training) and
+   scores every client;
+4. ranks clients by score (ties broken by `client_id`), assigns deciles, and
+   flags the top `send_share` to text.
+
+`send_share` lives in `configs/business.yaml` (0.38: the max-expected-profit
+depth of the targeting analysis); update it when the economics change. Each
+batch is written to the gitignored `data/interim/scoring/` as
+`send_list_<timestamp>_<run>.parquet` and never overwritten:
+
+| Column | Meaning |
+|---|---|
+| `client_id` | Client |
+| `uplift_score` | Predicted change in purchase probability from the SMS |
+| `rank` | 1 = highest score |
+| `decile` | 1 = top 10% |
+| `send` | Text this client |
+| `model_name`, `model_version` | The model version that scored the batch |
+| `scored_at`, `scoring_run_id` | When, and the MLflow run that records it |
+
+The run in `promolift-scoring` records the model version, counts, and a
+per-decile score summary, not the client list.
+
+```bash
+uv run --env-file .env python scripts/score_clients.py   # about a minute
+```
+
+Options: `--model-name`, `--output-dir`.
+
 ## Status
 
 Under active development.

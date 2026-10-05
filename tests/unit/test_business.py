@@ -77,6 +77,15 @@ def test_the_committed_config_is_valid() -> None:
 
     assert config.sms_cost > 0
     assert config.break_even_grid == tuple(sorted(config.break_even_grid))
+    assert config.send_share is not None
+    assert 0 < config.send_share < 1
+
+
+def test_send_share_is_optional_and_must_be_a_fraction(tmp_path: Path) -> None:
+    assert load_business_config(_write(tmp_path, _VALID)).send_share is None
+    assert load_business_config(_write(tmp_path, _VALID + "send_share: 0.38\n")).send_share == 0.38
+    with pytest.raises(ValueError, match="send_share"):
+        load_business_config(_write(tmp_path, _VALID + "send_share: 1.5\n"))
 
 
 def test_average_transaction_counts_each_transaction_once(feature_raw_dir: Path) -> None:

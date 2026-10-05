@@ -16,3 +16,8 @@ budget: null
 campaign_clients: null
 # Break-even uplifts (sms_cost / margin_per_purchase) for the sensitivity table.
 break_even_grid: [0.005, 0.01, 0.02, 0.03, 0.04, 0.05, 0.075, 0.1]
+# Share of scored clients to text, highest uplift first (scripts/score_clients.py).
+# The max-expected-profit depth of targeting run f1f0b456896c492d926971c5c9024d8b
+# (docs/targeting_results.md) for the values above; re-run the targeting
+# analysis and update this when the economics change.
+send_share: 0.38
