@@ -314,7 +314,9 @@ uv run --env-file .env python scripts/targeting_analysis.py   # a few minutes
 ```
 
 Logs one run to `promolift-targeting` (decision, profit curves, sensitivity
-table, plot). Options: `--references`, `--n-folds`, `--n-bootstrap`, `--seed`,
+table, plot). Results: [docs/targeting_results.md](docs/targeting_results.md)
+— with the placeholder economics, texting the top 38% earns ~3× texting
+everyone, and the response model loses money at every depth up to 50%. Options: `--references`, `--n-folds`, `--n-bootstrap`, `--seed`,
 `--leaderboard-run`, `--leaderboard-tracking-uri`.
 
 ## Status
