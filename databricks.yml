@@ -1,0 +1,88 @@
+# Databricks Asset Bundle: the scheduled client-scoring job.
+#
+#   databricks bundle validate --profile promolift
+#   databricks bundle deploy   --profile promolift   # builds the wheel, uploads, creates the job
+#   databricks bundle run score_clients --profile promolift
+#
+# The job runs `promolift.serving.job:main` on serverless compute: features
+# from the raw CSVs in the volume, the champion model from Unity Catalog, and
+# each batch appended to promolift_ai.scoring.targets. Deploy from a clean
+# commit: the commit is passed to the job and recorded with every batch.
+bundle:
+  name: promolift
+
+artifacts:
+  promolift_wheel:
+    type: whl
+    build: uv build --wheel
+    path: .
+
+sync:
+  # The job needs only configs/business.yaml from the synced files (the code
+  # ships in the wheel).
+  exclude:
+    - notebooks/**
+    - tests/**
+    - docs/**
+
+variables:
+  raw_dir:
+    description: Unity Catalog volume holding the six raw X5 RetailHero CSVs.
+    default: /Volumes/promolift_ai/scoring/raw_data
+  targets_table:
+    description: Delta table each scoring batch is appended to.
+    default: promolift_ai.scoring.targets
+  latest_view:
+    description: View showing only the most recent batch.
+    default: promolift_ai.scoring.targets_latest
+  experiment_root:
+    description: Workspace folder of the MLflow experiments.
+    default: /Shared/promolift
+
+resources:
+  jobs:
+    score_clients:
+      name: promolift-score-clients
+      description: >-
+        Scores every client with promolift_ai.models.uplift_targeting@champion
+        and appends the send list (top send_share of configs/business.yaml) to
+        promolift_ai.scoring.targets.
+      max_concurrent_runs: 1
+      # Defined for when fresh data arrives; the X5 snapshot is static, so it
+      # stays paused (development mode also pauses schedules).
+      schedule:
+        quartz_cron_expression: "0 0 6 ? * MON"
+        timezone_id: UTC
+        pause_status: PAUSED
+      environments:
+        - environment_key: scoring
+          spec:
+            environment_version: "3"
+            dependencies:
+              - ./dist/*.whl
+      tasks:
+        - task_key: score
+          environment_key: scoring
+          python_wheel_task:
+            package_name: promolift_ai
+            entry_point: promolift-score-job
+            parameters:
+              - --raw-dir
+              - ${var.raw_dir}
+              - --business-config
+              - ${workspace.file_path}/configs/business.yaml
+              - --table
+              - ${var.targets_table}
+              - --latest-view
+              - ${var.latest_view}
+              - --experiment-root
+              - ${var.experiment_root}
+              - --git-commit
+              - ${bundle.git.commit}
+
+targets:
+  dev:
+    mode: development
+    default: true
+    workspace:
+      host: https://dbc-800311cf-218a.cloud.databricks.com

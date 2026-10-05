@@ -3,16 +3,14 @@
 from datetime import UTC, datetime
 from pathlib import Path
 
+import mlflow
 import numpy as np
-import pandas as pd
 import polars as pl
 import pytest
 from mlflow import MlflowClient
 
-from promolift.models.dataset import build_model_features
-from promolift.models.registry import build_model
 from promolift.serving.pyfunc import ContractError, FeatureContract
-from promolift.serving.registration import log_packaged_model, register, set_champion
+from promolift.serving.registration import register, set_champion
 from promolift.serving.scoring import (
     SEND_LIST_COLUMNS,
     decile_summary,
@@ -21,7 +19,6 @@ from promolift.serving.scoring import (
     run_batch_scoring,
     send_list,
 )
-from promolift.tracking.mlflow_tracking import TrackingConfig, local_tracking_config
 
 _NAME = "uplift_scoring_test"
 _AT = datetime(2026, 10, 5, 9, 30, tzinfo=UTC)
@@ -106,58 +103,13 @@ def test_send_list_rejects_bad_inputs() -> None:
 
 
 # --- model input and end-to-end scoring ------------------------------------------
+# client_features, make_training_frame, and scoring_champion live in conftest.py.
 
 
-@pytest.fixture
-def features(feature_raw_dir: Path) -> pl.DataFrame:
-    # Real feature code on tiny raw files: c1 has purchases, c2 has none
-    # (null purchase features), and the table has boolean columns.
-    return build_model_features(feature_raw_dir)
+def test_model_input_matches_the_contract_layout(client_features, make_training_frame) -> None:
+    contract = FeatureContract.from_frame(make_training_frame(client_features, 50, 0))
 
-
-def _training_frame(features: pl.DataFrame, n: int, seed: int) -> pd.DataFrame:
-    # Converted exactly as models.dataset.model_frame converts training data.
-    rng = np.random.default_rng(seed)
-    base = (
-        features.drop("client_id")
-        .with_columns(pl.col(pl.Boolean).cast(pl.Int8))
-        .to_pandas()
-        .sample(n, replace=True, random_state=seed)
-        .reset_index(drop=True)
-    )
-    base["gender"] = pd.Categorical(rng.choice(["F", "M", "U"], n), categories=["F", "M", "U"])
-    return base
-
-
-@pytest.fixture
-def config(tmp_path: Path) -> TrackingConfig:
-    return local_tracking_config(tmp_path / "mlruns")
-
-
-@pytest.fixture
-def champion(features: pl.DataFrame, config: TrackingConfig, lineage_dirs: dict[str, Path]):
-    training = _training_frame(features, 400, seed=0)
-    rng = np.random.default_rng(1)
-    model = build_model(
-        "class_transformation", seed=0, overrides={"n_estimators": 10, "min_child_samples": 5}
-    ).fit(training, rng.integers(0, 2, 400), rng.integers(0, 2, 400))
-    packaged = log_packaged_model(
-        model,
-        training,
-        label="ct_test",
-        base_model="class_transformation",
-        config=config,
-        lineage=lineage_dirs,
-    )
-    version = register(packaged, _NAME, config)
-    set_champion(version, _NAME, config)
-    return packaged
-
-
-def test_model_input_matches_the_contract_layout(features: pl.DataFrame) -> None:
-    contract = FeatureContract.from_frame(_training_frame(features, 50, seed=0))
-
-    frame = model_input(features, contract)
+    frame = model_input(client_features, contract)
 
     assert tuple(frame.columns) == contract.columns
     numeric = [c for c in contract.columns if c != "gender"]
@@ -168,27 +120,30 @@ def test_model_input_matches_the_contract_layout(features: pl.DataFrame) -> None
     assert np.isnan(frame.loc[1, "monetary_avg"])
 
 
-def test_model_input_rejects_a_table_missing_contract_columns(features: pl.DataFrame) -> None:
-    contract = FeatureContract.from_frame(_training_frame(features, 50, seed=0))
+def test_model_input_rejects_a_table_missing_contract_columns(
+    client_features, make_training_frame
+) -> None:
+    contract = FeatureContract.from_frame(make_training_frame(client_features, 50, 0))
 
     with pytest.raises(ContractError, match="lacks contract columns"):
-        model_input(features.drop("frequency"), contract)
+        model_input(client_features.drop("frequency"), contract)
 
 
-def test_load_champion_resolves_the_alias_to_a_version(champion, config: TrackingConfig) -> None:
-    loaded = load_champion(_NAME, config)
+def test_load_champion_resolves_the_alias_to_a_version(scoring_champion) -> None:
+    loaded = load_champion(scoring_champion.name, scoring_champion.config)
 
     assert loaded.version == "1"
-    assert loaded.contract == champion.contract
+    assert loaded.contract == scoring_champion.packaged.contract
 
 
 def test_scores_every_client_and_writes_the_batch(
-    champion, features: pl.DataFrame, config: TrackingConfig, lineage_dirs, tmp_path: Path
+    scoring_champion, client_features, lineage_dirs, tmp_path: Path
 ) -> None:
+    config = scoring_champion.config
     result = run_batch_scoring(
-        features,
+        client_features,
         send_share=0.5,
-        model_name=_NAME,
+        model_name=scoring_champion.name,
         output_dir=tmp_path / "scoring",
         scored_at=_AT,
         config=config,
@@ -196,7 +151,7 @@ def test_scores_every_client_and_writes_the_batch(
     )
 
     written = pl.read_parquet(result.path)
-    assert written.height == features.height == 2
+    assert written.height == client_features.height == 2
     assert set(written["client_id"]) == {"c1", "c2"}
     assert written["send"].sum() == 1
     assert written["model_version"].unique().to_list() == ["1"]
@@ -211,17 +166,41 @@ def test_scores_every_client_and_writes_the_batch(
     assert run.data.params["send_share"] == "0.5"
 
 
-def test_batches_are_kept_and_follow_the_champion(
-    champion, features: pl.DataFrame, config: TrackingConfig, lineage_dirs, tmp_path: Path
+def test_the_sink_writes_inside_the_run_with_extra_tags(
+    scoring_champion, client_features, lineage_dirs, tmp_path: Path
 ) -> None:
-    output = tmp_path / "scoring"
+    received = []
+
+    def sink(targets: pl.DataFrame) -> None:
+        received.append((targets.height, mlflow.active_run().info.run_id))
+
+    result = run_batch_scoring(
+        client_features,
+        send_share=0.5,
+        model_name=scoring_champion.name,
+        output_dir=tmp_path / "scoring",
+        config=scoring_champion.config,
+        lineage=lineage_dirs,
+        tags={"trigger": "test"},
+        sink=sink,
+    )
+
+    assert received == [(2, result.run_id)]
+    run = MlflowClient(tracking_uri=scoring_champion.config.tracking_uri).get_run(result.run_id)
+    assert run.data.tags["trigger"] == "test"
+
+
+def test_batches_are_kept_and_follow_the_champion(
+    scoring_champion, client_features, lineage_dirs, tmp_path: Path
+) -> None:
+    name, config, output = scoring_champion.name, scoring_champion.config, tmp_path / "scoring"
     first = run_batch_scoring(
-        features, send_share=0.5, model_name=_NAME, output_dir=output, scored_at=_AT,
+        client_features, send_share=0.5, model_name=name, output_dir=output, scored_at=_AT,
         config=config, lineage=lineage_dirs,
     )  # fmt: skip
-    set_champion(register(champion, _NAME, config), _NAME, config)
+    set_champion(register(scoring_champion.packaged, name, config), name, config)
     second = run_batch_scoring(
-        features, send_share=0.5, model_name=_NAME, output_dir=output,
+        client_features, send_share=0.5, model_name=name, output_dir=output,
         scored_at=datetime(2026, 10, 12, tzinfo=UTC), config=config, lineage=lineage_dirs,
     )  # fmt: skip
 

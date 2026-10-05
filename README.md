@@ -23,6 +23,11 @@ Requires Python 3.12 and [uv](https://docs.astral.sh/uv/).
 uv sync
 ```
 
+`uv sync` installs the package's runtime dependencies plus the `research`
+group (advanced models, tuning, plots) and `dev` group by default. The built
+wheel declares only the runtime dependencies (loading, features, scoring),
+which keeps the Databricks scoring job's install small.
+
 Run tests:
 
 ```bash
@@ -393,6 +398,39 @@ uv run --env-file .env python scripts/score_clients.py   # about a minute
 ```
 
 Options: `--model-name`, `--output-dir`.
+
+### Scheduled scoring on Databricks
+
+`databricks.yml` (a Databricks Asset Bundle) runs the same scoring as a
+serverless job, `promolift-score-clients`. Its wheel task
+(`promolift.serving.job:main`) reads the raw CSVs from the Unity Catalog
+volume `/Volumes/promolift_ai/scoring/raw_data`, the business config from the
+bundle's synced files, and the champion from Unity Catalog. Each batch is
+**appended** to the Delta table `promolift_ai.scoring.targets` (with a
+`deployed_git_commit` column), and the view
+`promolift_ai.scoring.targets_latest` shows only the most recent batch. The
+weekly schedule is defined but paused: the X5 snapshot is static.
+
+One-time upload of the raw files to the volume (byte-for-byte copies):
+
+```powershell
+foreach ($f in "clients","products","purchases","uplift_train","uplift_test","uplift_sample_submission") {
+  databricks fs cp "data/raw/$f.csv" "dbfs:/Volumes/promolift_ai/scoring/raw_data/$f.csv" --profile promolift
+}
+```
+
+Deploy from a clean commit (the commit is recorded with every batch) and run:
+
+```bash
+databricks bundle validate --profile promolift
+databricks bundle deploy --profile promolift        # builds the wheel, creates the job
+databricks bundle run score_clients --profile promolift
+```
+
+The `dev` target uses development mode: the job is created as
+`[dev <user>] promolift-score-clients`, runs as the deploying user, and its
+schedule stays paused. Needs `USE SCHEMA`, `CREATE TABLE`, `SELECT`, `MODIFY`
+on `promolift_ai.scoring` and `READ VOLUME` on its `raw_data` volume.
 
 ## Status
 
