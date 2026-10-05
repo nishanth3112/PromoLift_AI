@@ -348,6 +348,8 @@ evaluation run). The `champion` alias -- what batch scoring loads, as
 uv run --env-file .env python scripts/register_model.py --set-champion
 ```
 
+The current champion and its limits: [docs/model_card.md](docs/model_card.md).
+
 Against Databricks the working tree must be clean. Registering needs
 `USE CATALOG` on `promolift_ai` and `USE SCHEMA` + `CREATE MODEL` on
 `promolift_ai.models`. Options: `--model-name`, `--set-champion`,
