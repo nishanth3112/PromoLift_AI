@@ -75,6 +75,8 @@ htmlcov/
 /artifacts/
 # Unanchored on purpose: MLflow can create mlruns/ in any working directory.
 mlruns/
+# Databricks Asset Bundle local state (databricks bundle deploy).
+/.databricks/
 
 
 # ==========================================

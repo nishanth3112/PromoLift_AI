@@ -4,31 +4,32 @@ version = "0.1.0"
 description = "Production-grade causal ML platform for retail promotion incrementality and campaign optimization."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
+# What the installed package needs to load data, build features, and score with
+# a registered model -- what the wheel declares, e.g. for the Databricks scoring
+# job. Research-only libraries are in the `research` dependency group below.
+#
+# numpy, pandas, and pyarrow are core packages of Databricks serverless compute:
+# a job may not change their versions. Keep their lower bounds at or below
+# serverless environment version 4 (numpy 2.1.3, pandas 2.2.3, pyarrow 19.0.1);
+# tests/unit/test_job.py enforces this.
 dependencies = [
-    "catboost>=1.2.10",
-    "causalml>=0.17.0",
-    "dowhy>=0.12",
-    "duckdb>=1.5.5",
-    "econml>=0.17.0",
     "lightgbm>=4.7.0",
-    "matplotlib>=3.11.2",
     "mlflow>=3.16.1",
-    "networkx<3.5",
-    "numpy>=2.5.3",
-    "optuna>=5.0.0",
-    "ortools>=9.15.6755",
-    "pandas<3",
+    "numpy>=2.1",
+    "pandas>=2.2,<3",
     "pandera>=0.33.1",
     "polars>=1.44.2",
-    "pyarrow>=25.0.1",
+    "pyarrow>=19",
     "pyyaml>=6.0.3",
     # <1.10: scikit-uplift 0.5.1 calls sklearn.utils.extmath.stable_cumsum,
     # deprecated in 1.8 and removed in 1.10 -- every uplift metric would break.
     "scikit-learn>=1.9.1,<1.10",
     "scikit-uplift>=0.5.1",
-    "seaborn>=0.13.2",
-    "shap>=0.52.0",
 ]
+
+[project.scripts]
+# Entry point of the Databricks scoring job's wheel task (databricks.yml).
+promolift-score-job = "promolift.serving.job:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -41,6 +42,7 @@ packages = ["src/promolift", "data_contracts"]
 members = []
 
 [tool.uv]
+default-groups = ["dev", "research"]
 # Restrict the universal lockfile to the platforms actually in use (arm64
 # Mac, x86_64 Windows, and the Linux CI runner) -- some causal-ML/optimization
 # dependencies have no valid resolution on platforms nobody on this team
@@ -53,6 +55,21 @@ environments = [
 ]
 
 [dependency-groups]
+# Advanced models, tuning, ablation, and analysis plots: installed locally and in
+# CI by default (see default-groups), but not declared by the wheel.
+research = [
+    "catboost>=1.2.10",
+    "causalml>=0.17.0",
+    "dowhy>=0.12",
+    "duckdb>=1.5.5",
+    "econml>=0.17.0",
+    "matplotlib>=3.11.2",
+    "networkx<3.5",
+    "optuna>=5.0.0",
+    "ortools>=9.15.6755",
+    "seaborn>=0.13.2",
+    "shap>=0.52.0",
+]
 dev = [
     "ipykernel>=7.3.0",
     "jupyter>=1.1.1",

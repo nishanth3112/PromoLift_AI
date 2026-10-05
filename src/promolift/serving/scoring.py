@@ -15,6 +15,7 @@ overwritten, so every past decision can be compared with what happened.
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -169,6 +170,8 @@ def run_batch_scoring(
     scored_at: datetime | None = None,
     config: TrackingConfig | None = None,
     lineage: dict[str, Path] | None = None,
+    tags: dict[str, str] | None = None,
+    sink: Callable[[pl.DataFrame], None] | None = None,
 ) -> ScoringResult:
     """Score every client in ``features`` with the champion, in one MLflow run.
 
@@ -180,7 +183,11 @@ def run_batch_scoring(
         features: One row per client: ``client_id`` plus the contract columns
             (``models.dataset.build_model_features``).
         send_share: Fraction of clients to text (``business.yaml``).
-        lineage: ``repo_dir`` / ``data_dir`` / ``processed_dir`` overrides (for tests).
+        lineage: ``repo_dir`` / ``data_dir`` / ``processed_dir`` overrides
+            (for tests, or the raw volume in the Databricks job).
+        tags: Extra run tags.
+        sink: Also writes the batch elsewhere (the job's Delta table). Called
+            inside the run, so a failed write fails the run.
     """
     config = config if config is not None else default_tracking_config()
     output_dir = output_dir if output_dir is not None else project_root() / SCORING_OUTPUT_DIR
@@ -198,7 +205,8 @@ def run_batch_scoring(
             "model_name": model_name,
             "model_version": champion.version,
             "scored_at": scored_at.isoformat(),
-        },
+        }
+        | (tags or {}),
         config=config,
         **(lineage or {}),
     ) as run:
@@ -215,6 +223,8 @@ def run_batch_scoring(
         stamp = scored_at.strftime("%Y%m%dT%H%M%SZ")
         path = output_dir / f"send_list_{stamp}_{run.info.run_id[:8]}.parquet"
         targets.write_parquet(path)
+        if sink is not None:
+            sink(targets)
 
         sent = targets.filter(pl.col("send"))
         mlflow.log_params({"send_share": send_share})

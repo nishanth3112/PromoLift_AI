@@ -1,10 +1,13 @@
-"""Shared fixtures: run lineage / MLflow tracking, and a synthetic uplift experiment."""
+"""Shared fixtures: run lineage / MLflow tracking, a synthetic uplift experiment, and a champion."""
 
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
+import polars as pl
 import pytest
 
 
@@ -93,3 +96,62 @@ def feature_raw_dir(tmp_path: Path) -> Path:
         "c1,t2,2019-01-05 18:00:00,0.0,5.0,-20.0,0.0,50.0,s2,p1,1.0,30.0,50.0\n"
     )
     return raw
+
+
+@pytest.fixture
+def client_features(feature_raw_dir: Path) -> pl.DataFrame:
+    """Real feature code on the tiny raw files: c1 has purchases, c2 has none (null
+    purchase features), and the table has boolean columns."""
+    from promolift.models.dataset import build_model_features
+
+    return build_model_features(feature_raw_dir)
+
+
+@pytest.fixture
+def make_training_frame() -> Callable[[pl.DataFrame, int, int], pd.DataFrame]:
+    """Training rows in the layout of ``client_features``, converted as ``model_frame`` does."""
+
+    def make(features: pl.DataFrame, n: int, seed: int) -> pd.DataFrame:
+        rng = np.random.default_rng(seed)
+        base = (
+            features.drop("client_id")
+            .with_columns(pl.col(pl.Boolean).cast(pl.Int8))
+            .to_pandas()
+            .sample(n, replace=True, random_state=seed)
+            .reset_index(drop=True)
+        )
+        base["gender"] = pd.Categorical(rng.choice(["F", "M", "U"], n), categories=["F", "M", "U"])
+        return base
+
+    return make
+
+
+@pytest.fixture
+def scoring_champion(
+    client_features: pl.DataFrame,
+    make_training_frame: Callable,
+    lineage_dirs: dict[str, Path],
+    tmp_path: Path,
+) -> SimpleNamespace:
+    """A model for ``client_features`` registered in a local registry as version 1, champion."""
+    from promolift.models.registry import build_model
+    from promolift.serving.registration import log_packaged_model, register, set_champion
+    from promolift.tracking.mlflow_tracking import local_tracking_config
+
+    name = "uplift_scoring_test"
+    config = local_tracking_config(tmp_path / "mlruns")
+    training = make_training_frame(client_features, 400, 0)
+    rng = np.random.default_rng(1)
+    model = build_model(
+        "class_transformation", seed=0, overrides={"n_estimators": 10, "min_child_samples": 5}
+    ).fit(training, rng.integers(0, 2, 400), rng.integers(0, 2, 400))
+    packaged = log_packaged_model(
+        model,
+        training,
+        label="ct_test",
+        base_model="class_transformation",
+        config=config,
+        lineage=lineage_dirs,
+    )
+    set_champion(register(packaged, name, config), name, config)
+    return SimpleNamespace(name=name, config=config, packaged=packaged)
