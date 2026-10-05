@@ -41,10 +41,11 @@ def test_profit_peaks_where_uplift_drops_below_break_even(known) -> None:
 
     choice = choose_depth(curve)
 
-    assert 0.16 <= choice.best_depth <= 0.24
-    assert curve.profit_per_1000.max() == pytest.approx(40, abs=6)
-    assert choice.chosen_depth <= choice.best_depth
-    assert choice.chosen_depth in choice.tied_depths
+    assert 0.16 <= choice.depth <= 0.24
+    assert choice.profit_per_1000 == pytest.approx(40, abs=6)
+    assert choice.profit_per_1000 == curve.profit_per_1000.max()
+    assert choice.shallowest_tied_depth <= choice.depth
+    assert choice.shallowest_tied_depth in choice.tied_depths
 
 
 def test_profit_is_margin_times_extra_purchases_minus_sms_cost(known) -> None:
@@ -79,8 +80,8 @@ def test_text_nobody_when_no_depth_pays() -> None:
     # Break-even 100%: no client's uplift can pay for the SMS.
     choice = choose_depth(profit_curve(by_depth, Economics(1.0, 1.0)))
 
-    assert choice.best_depth == 0
-    assert choice.chosen_depth == 0
+    assert choice.depth == 0
+    assert choice.shallowest_tied_depth == 0
     assert choice.profit_per_1000 == 0
 
 
@@ -90,19 +91,33 @@ def test_free_sms_with_uplift_everywhere_texts_deep() -> None:
 
     choice = choose_depth(profit_curve(by_depth, Economics(0.0, 1.0)))
 
-    assert choice.best_depth >= 0.9
+    assert choice.depth >= 0.9
+
+
+def test_the_decision_never_earns_less_than_texting_everyone() -> None:
+    # Cheap SMS and uplift everywhere: the curve keeps rising, and the tied
+    # range is wide. The decision must still match or beat texting everyone
+    # (depth 100%: the same clients a ranking-free send reaches).
+    scores, treatment, outcome = _known_optimum(40_000, seed=7, tail_uplift=0.05)
+    by_depth = uplift_by_depth(scores, treatment, outcome, depths=_DEPTHS, n_bootstrap=200)
+    curve = profit_curve(by_depth, Economics(0.01, 1.0))
+
+    choice = choose_depth(curve)
+
+    assert choice.profit_per_1000 >= curve.profit_per_1000[-1]
 
 
 def test_shallowest_tied_depth_on_a_profit_plateau() -> None:
     # The tail's uplift equals break-even exactly, so profit is flat after 20%:
-    # every depth from ~20% on is tied, and the rule picks the shallow end.
+    # every depth from ~20% on is tied, and the lower-spend option is the shallow end.
     scores, treatment, outcome = _known_optimum(40_000, seed=5, tail_uplift=0.1)
     by_depth = uplift_by_depth(scores, treatment, outcome, depths=_DEPTHS, n_bootstrap=200)
 
     choice = choose_depth(profit_curve(by_depth, Economics(0.1, 1.0)))
 
-    assert 0.1 <= choice.chosen_depth <= 0.3
-    assert choice.chosen_depth <= choice.best_depth
+    assert 0.1 <= choice.shallowest_tied_depth <= 0.3
+    assert choice.shallowest_tied_depth <= choice.depth
+    assert choice.shallowest_tied_profit <= choice.profit_per_1000
     assert len(choice.tied_depths) > 1
 
 
@@ -111,14 +126,14 @@ def test_budget_cap_limits_the_depth(known) -> None:
 
     choice = choose_depth(curve, max_depth=0.1)
 
-    assert choice.best_depth <= 0.1
+    assert choice.depth <= 0.1
     assert choice.max_depth == 0.1
     assert all(depth <= 0.1 for depth in choice.tied_depths)
 
 
-def test_best_depth_never_deepens_as_sms_gets_dearer(known) -> None:
+def test_the_depth_never_deepens_as_sms_gets_dearer(known) -> None:
     best = [
-        choose_depth(profit_curve(known, Economics(cost, 1.0))).best_depth
+        choose_depth(profit_curve(known, Economics(cost, 1.0))).depth
         for cost in (0.0, 0.05, 0.1, 0.2, 0.5)
     ]
 

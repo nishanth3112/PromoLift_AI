@@ -220,39 +220,43 @@ def budget_depth_cap(budget: float, sms_cost: float, campaign_clients: int) -> f
 
 @dataclass(frozen=True)
 class DepthChoice:
-    """The chosen depth, the profit-maximizing one, and every depth tied with it."""
+    """The profit-maximizing depth, and the shallowest depth statistically tied with it."""
 
-    chosen_depth: float
-    best_depth: float
-    tied_depths: tuple[float, ...]
-    max_depth: float
+    depth: float
     profit_per_1000: float
     profit_lower: float
     profit_upper: float
+    shallowest_tied_depth: float
+    shallowest_tied_profit: float
+    tied_depths: tuple[float, ...]
+    max_depth: float
 
     def as_dict(self) -> dict:
         return {
-            "chosen_depth": self.chosen_depth,
-            "best_depth": self.best_depth,
-            "tied_depths": list(self.tied_depths),
-            "max_depth": self.max_depth,
+            "depth": self.depth,
             "profit_per_1000": self.profit_per_1000,
             "profit_lower": self.profit_lower,
             "profit_upper": self.profit_upper,
+            "shallowest_tied_depth": self.shallowest_tied_depth,
+            "shallowest_tied_profit": self.shallowest_tied_profit,
+            "tied_depths": list(self.tied_depths),
+            "max_depth": self.max_depth,
         }
 
 
 def choose_depth(
     curve: ProfitCurve, *, max_depth: float = 1.0, confidence: float = DEFAULT_CONFIDENCE
 ) -> DepthChoice:
-    """The shallowest depth whose profit is statistically tied with the best.
+    """The depth with the highest expected profit, up to ``max_depth`` (a budget cap).
 
-    The best depth maximizes the point-estimate profit among depths up to
-    ``max_depth`` (a budget cap); ties go to the shallower depth. A depth is
-    tied with it when the paired bootstrap CI of their profit difference
-    includes zero. Choosing the shallowest tied depth sends the fewest SMS for
-    a profit the data can't distinguish from the maximum -- and returns depth
-    0 (don't send) when no depth is reliably better than not sending.
+    Equal profits go to the shallower depth. Depth 0 (don't send) wins when
+    no depth has positive expected profit.
+
+    Also reported: the shallowest depth whose profit is statistically tied
+    with the best (the paired bootstrap CI of the difference includes zero),
+    a lower-spend option. It is not the decision: the profit curve is noisy,
+    so the tied range is wide, and its shallow end can earn less in
+    expectation than texting everyone.
     """
     allowed = np.flatnonzero(curve.depths <= max_depth + 1e-9)
     best = allowed[np.argmax(curve.profit_per_1000[allowed])]
@@ -260,15 +264,16 @@ def choose_depth(
     differences = curve.sample_profit[:, allowed] - curve.sample_profit[:, [best]]
     lower = np.quantile(differences, alpha / 2, axis=0)
     upper = np.quantile(differences, 1 - alpha / 2, axis=0)
-    tied = allowed[(lower <= 0) & (upper >= 0)]
     # The best is always tied with itself (its difference is identically zero).
-    chosen = int(tied.min())
+    tied = allowed[(lower <= 0) & (upper >= 0)]
+    shallowest = int(tied.min())
     return DepthChoice(
-        chosen_depth=float(curve.depths[chosen]),
-        best_depth=float(curve.depths[best]),
+        depth=float(curve.depths[best]),
+        profit_per_1000=float(curve.profit_per_1000[best]),
+        profit_lower=float(curve.profit_lower[best]),
+        profit_upper=float(curve.profit_upper[best]),
+        shallowest_tied_depth=float(curve.depths[shallowest]),
+        shallowest_tied_profit=float(curve.profit_per_1000[shallowest]),
         tied_depths=tuple(float(curve.depths[i]) for i in tied),
         max_depth=max_depth,
-        profit_per_1000=float(curve.profit_per_1000[chosen]),
-        profit_lower=float(curve.profit_lower[chosen]),
-        profit_upper=float(curve.profit_upper[chosen]),
     )

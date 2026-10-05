@@ -3,9 +3,10 @@
 The chosen model (the leaderboard rule of ``models.selection``) and the
 reference rankings score every train + val client out of fold. Profit per
 1,000 clients is computed at every depth from 0% to 100% with the economics
-in ``configs/business.yaml``; the chosen depth is the shallowest one whose
-profit is statistically tied with the maximum. A sensitivity table repeats
-the decision for each break-even uplift (SMS cost / margin) in the config.
+in ``configs/business.yaml``; the decision is the depth with the highest
+expected profit, and the shallowest depth statistically tied with it is
+reported as a lower-spend option. A sensitivity table repeats the decision
+for each break-even uplift (SMS cost / margin) in the config.
 Test is never loaded. Logs one run to ``promolift-targeting``:
 
     uv run --env-file .env python scripts/targeting_analysis.py
@@ -103,12 +104,12 @@ def main() -> int:
     choice = analysis.choice
     print(
         f"\nDecision ({config.currency}, per 1,000 clients): text the top "
-        f"{choice.chosen_depth:.0%} -> profit {choice.profit_per_1000:,.0f} "
+        f"{choice.depth:.0%} -> profit {choice.profit_per_1000:,.0f} "
         f"[{choice.profit_lower:,.0f}, {choice.profit_upper:,.0f}]"
     )
-    best = analysis.curves[chosen].profit_per_1000.max()
     print(
-        f"  max-profit depth {choice.best_depth:.0%} ({best:,.0f}); "
+        f"  lower-spend option: top {choice.shallowest_tied_depth:.0%} "
+        f"({choice.shallowest_tied_profit:,.0f}, statistically tied); "
         f"budget cap {choice.max_depth:.0%}"
     )
     print(f"  random targeting (all or nothing): {analysis.random_targeting_profit:,.0f}")
@@ -118,9 +119,11 @@ def main() -> int:
     print("\nSensitivity (break-even uplift = SMS cost / margin):")
     for row in analysis.sensitivity.iter_rows(named=True):
         print(
-            f"  {row['break_even_uplift']:6.1%}: text top {row['chosen_depth']:4.0%} "
-            f"(max at {row['best_depth']:4.0%}), profit {row['profit_per_1000']:8,.0f} "
-            f"[{row['profit_ci_lower']:8,.0f}, {row['profit_ci_upper']:8,.0f}]; "
+            f"  {row['break_even_uplift']:6.1%}: text top {row['depth']:4.0%}, profit "
+            f"{row['profit_per_1000']:8,.0f} [{row['profit_ci_lower']:8,.0f}, "
+            f"{row['profit_ci_upper']:8,.0f}]; lower-spend top "
+            f"{row['shallowest_tied_depth']:4.0%} "
+            f"({row['shallowest_tied_profit_per_1000']:7,.0f}); "
             f"random {row['random_targeting_profit_per_1000']:8,.0f}"
         )
     print(f"\nRun {analysis.run_id} on {tracking.tracking_uri}")

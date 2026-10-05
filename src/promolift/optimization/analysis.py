@@ -39,7 +39,7 @@ from promolift.optimization.targeting import (
 from promolift.tracking.mlflow_tracking import Experiment, TrackingConfig, start_run
 
 DEFAULT_N_FOLDS = 5
-DEPTH_RULE = "shallowest_tied_with_max_profit"
+DEPTH_RULE = "max_expected_profit"
 
 
 def out_of_fold_rankings(
@@ -72,7 +72,7 @@ def sensitivity_table(
     margin: float,
     config: BusinessConfig,
 ) -> pl.DataFrame:
-    """The chosen depth and its profit for each break-even uplift in the config.
+    """The max-profit depth, its profit, and the lower-spend option per break-even uplift.
 
     Each scenario keeps the margin and sets the SMS cost to break-even x
     margin. References report their best point-estimate profit at any depth
@@ -84,15 +84,16 @@ def sensitivity_table(
         economics = Economics(break_even * margin, margin)
         curve = profit_curve(by_depth[chosen], economics)
         choice = choose_depth(curve, max_depth=depth_cap(config, economics.sms_cost))
-        i = _at(curve, choice.chosen_depth)
+        i = _at(curve, choice.depth)
         row = {
             "break_even_uplift": break_even,
             "sms_cost": economics.sms_cost,
-            "chosen_depth": choice.chosen_depth,
-            "best_depth": choice.best_depth,
+            "depth": choice.depth,
             "profit_per_1000": choice.profit_per_1000,
             "profit_ci_lower": choice.profit_lower,
             "profit_ci_upper": choice.profit_upper,
+            "shallowest_tied_depth": choice.shallowest_tied_depth,
+            "shallowest_tied_profit_per_1000": choice.shallowest_tied_profit,
             "sms_per_1000": float(curve.sms_per_1000[i]),
             "extra_purchases_per_1000": float(curve.extra_purchases_per_1000[i]),
             "random_targeting_profit_per_1000": random_targeting_profit(
@@ -207,7 +208,7 @@ def run_targeting_analysis(
                 "seed": seed,
             }
         )
-        i = _at(curves[chosen], choice.chosen_depth)
+        i = _at(curves[chosen], choice.depth)
         mlflow.log_metrics(
             {
                 "average_transaction": average_transaction,
@@ -215,13 +216,13 @@ def run_targeting_analysis(
                 "break_even_uplift": economics.break_even_uplift,
                 "ate": by_depth[chosen].ate,
                 "n_clients": len(frame.outcome),
-                "chosen_depth": choice.chosen_depth,
-                "best_depth": choice.best_depth,
+                "depth": choice.depth,
                 "max_depth": choice.max_depth,
                 "profit_per_1000": choice.profit_per_1000,
                 "profit_per_1000_ci_lower": choice.profit_lower,
                 "profit_per_1000_ci_upper": choice.profit_upper,
-                "best_depth_profit_per_1000": float(curves[chosen].profit_per_1000.max()),
+                "shallowest_tied_depth": choice.shallowest_tied_depth,
+                "shallowest_tied_profit_per_1000": choice.shallowest_tied_profit,
                 "sms_per_1000": float(curves[chosen].sms_per_1000[i]),
                 "extra_purchases_per_1000": float(curves[chosen].extra_purchases_per_1000[i]),
                 "random_targeting_profit_per_1000": random_profit,
@@ -245,7 +246,7 @@ def run_targeting_analysis(
         mlflow.log_text(curve_table(curves).write_csv(), "targeting/profit_curves.csv")
         mlflow.log_text(sensitivity.write_csv(), "targeting/sensitivity.csv")
         mlflow.log_figure(
-            profit_curve_figure(curves, chosen=chosen, chosen_depth=choice.chosen_depth),
+            profit_curve_figure(curves, chosen=chosen, chosen_depth=choice.depth),
             "targeting/profit_curves.png",
         )
         return TargetingAnalysis(

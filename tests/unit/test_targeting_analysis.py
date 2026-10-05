@@ -98,7 +98,7 @@ def test_the_oracle_texts_the_persuadables_and_beats_random(
     analysis = _analyze(rankings, frame, tracking, lineage_dirs)
 
     # Persuadables are the top ~30% (uplift 0.4 > break-even 0.12); the rest have none.
-    assert 0.15 <= analysis.choice.best_depth <= 0.4
+    assert 0.15 <= analysis.choice.depth <= 0.4
     assert analysis.choice.profit_per_1000 > 0
     assert analysis.curves["oracle"].profit_per_1000.max() > (
         analysis.curves["random"].profit_per_1000.max()
@@ -116,7 +116,9 @@ def test_logs_the_decision_curves_and_sensitivity(
     assert run.data.tags["run_type"] == "targeting"
     assert run.data.tags["chosen_model"] == "oracle"
     assert run.data.tags["reference_models"] == "random"
-    assert run.data.metrics["chosen_depth"] == analysis.choice.chosen_depth
+    assert run.data.tags["depth_rule"] == "max_expected_profit"
+    assert run.data.metrics["depth"] == analysis.choice.depth
+    assert run.data.metrics["shallowest_tied_depth"] == analysis.choice.shallowest_tied_depth
     assert run.data.metrics["margin_per_purchase"] == pytest.approx(25.0)
     assert "random_best_profit_per_1000" in run.data.metrics
     artifacts = {a.path for a in client.list_artifacts(analysis.run_id, "targeting")}
@@ -142,7 +144,8 @@ def test_sensitivity_has_one_row_per_break_even_and_never_deepens(
 
     assert table["break_even_uplift"].to_list() == list(_GRID)
     assert table["sms_cost"].to_list() == pytest.approx([r * 25.0 for r in _GRID])
-    assert table["best_depth"].is_sorted(descending=True)
+    assert table["depth"].is_sorted(descending=True)
+    assert (table["shallowest_tied_depth"] <= table["depth"]).all()
     assert "random_best_profit_per_1000" in table.columns
 
 
@@ -155,7 +158,7 @@ def test_a_budget_caps_the_depth(
     )
 
     assert analysis.choice.max_depth == pytest.approx(0.1)
-    assert analysis.choice.best_depth <= 0.1
+    assert analysis.choice.depth <= 0.1
 
 
 def test_the_chosen_model_needs_a_ranking(

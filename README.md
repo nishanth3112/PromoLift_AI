@@ -289,9 +289,11 @@ purchase: keep texting while the next clients' uplift exceeds it.
   loaded.
 - Profit per 1,000 clients is computed at every depth from 0% to 100%, with
   bootstrap CIs (`optimization/targeting.py`).
-- The chosen depth is the **shallowest one whose profit is statistically tied
-  with the maximum** (paired bootstrap): the fewest SMS for a profit the data
-  can't tell apart from the best. Depth 0 (text nobody) is always a candidate.
+- The decision is the depth with the **highest expected profit**; depth 0
+  (text nobody) is always a candidate. The shallowest depth whose profit is
+  statistically tied with it (paired bootstrap) is reported as a lower-spend
+  option, not the decision: the tied range is wide, and its shallow end can
+  earn less than texting everyone when SMS is cheap.
 - A sensitivity table repeats the decision for each break-even uplift in the
   config, so it answers for any real cost and margin without a re-run.
 
