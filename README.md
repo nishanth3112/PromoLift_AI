@@ -319,6 +319,40 @@ table, plot). Results: [docs/targeting_results.md](docs/targeting_results.md)
 everyone, and the response model loses money at every depth up to 50%. Options: `--references`, `--n-folds`, `--n-bootstrap`, `--seed`,
 `--leaderboard-run`, `--leaderboard-tracking-uri`.
 
+## Model packaging and registry
+
+`scripts/register_model.py` turns the final model into a versioned artifact
+that batch scoring can load without retraining. It refits the final model
+(the leaderboard rule's choice, with its tuned parameters) on train + val --
+the same fit that was evaluated once on test -- and logs it in
+`promolift-models` as an MLflow `pyfunc` model with:
+
+- **a feature contract** (`serving/pyfunc.py`): the training columns in order
+  and the allowed levels of each categorical. Scoring input with a missing or
+  extra column, text in a numeric column, or an unseen category is refused
+  instead of scored silently wrong;
+- **a signature** and an input example. The canonical input is every numeric
+  column as float64 and categoricals as strings (`FeatureContract.to_input`);
+- **a drift reference**: per-feature deciles, means, null shares, and category
+  shares of the training clients (`contract/drift_reference.json`).
+
+The model is then reloaded from the store and must score bit-identically
+before it is registered as a new version of
+`promolift_ai.models.uplift_targeting` in Unity Catalog. Each version carries
+the run's lineage tags (commit, split, raw data, feature code, final
+evaluation run). The `champion` alias -- what batch scoring loads, as
+`models:/promolift_ai.models.uplift_targeting@champion` -- moves only with
+`--set-champion`:
+
+```bash
+uv run --env-file .env python scripts/register_model.py --set-champion
+```
+
+Against Databricks the working tree must be clean. Registering needs
+`USE CATALOG` on `promolift_ai` and `USE SCHEMA` + `CREATE MODEL` on
+`promolift_ai.models`. Options: `--model-name`, `--set-champion`,
+`--leaderboard-run`, `--leaderboard-tracking-uri`, `--seed`.
+
 ## Status
 
 Under active development.
