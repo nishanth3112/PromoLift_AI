@@ -338,8 +338,9 @@ the same fit that was evaluated once on test -- and logs it in
   instead of scored silently wrong;
 - **a signature** and an input example. The canonical input is every numeric
   column as float64 and categoricals as strings (`FeatureContract.to_input`);
-- **a drift reference**: per-feature deciles, means, null shares, and category
-  shares of the training clients (`contract/drift_reference.json`).
+- **a drift reference**: the training clients' features binned, with the
+  expected share of every bin (see [Monitoring](#monitoring)), carried by the
+  model itself and logged as `contract/drift_reference.json`.
 
 The model is then reloaded from the store and must score bit-identically
 before it is registered as a new version of
@@ -370,9 +371,11 @@ whole client base:
 2. resolves `promolift_ai.models.uplift_targeting@champion` to one version
    and loads that version, so a batch never mixes models;
 3. converts the features to the model's canonical input
-   (`serving/scoring.py: model_input`, booleans to 0/1 as in training) and
-   scores every client;
-4. ranks clients by score (ties broken by `client_id`), assigns deciles, and
+   (`serving/scoring.py: model_input`, booleans to 0/1 as in training);
+4. checks the batch for drift against the champion's training reference
+   ([Monitoring](#monitoring)) and stops before writing anything if a feature
+   drifted severely; then scores every client;
+5. ranks clients by score (ties broken by `client_id`), assigns deciles, and
    flags the top `send_share` to text.
 
 `send_share` lives in `configs/business.yaml` (0.38: the max-expected-profit
@@ -390,8 +393,10 @@ batch is written to the gitignored `data/interim/scoring/` as
 | `model_name`, `model_version` | The model version that scored the batch |
 | `scored_at`, `scoring_run_id` | When, and the MLflow run that records it |
 
-The run in `promolift-scoring` records the model version, counts, and a
-per-decile score summary, not the client list.
+The run in `promolift-scoring` records the model version, counts, a
+per-decile score summary, and every feature's drift (`psi_<feature>`
+metrics, a `drift_status` tag, `drift/drift_report.csv`), not the client
+list.
 
 ```bash
 uv run --env-file .env python scripts/score_clients.py   # about a minute
@@ -408,8 +413,10 @@ volume `/Volumes/promolift_ai/scoring/raw_data`, the business config from the
 bundle's synced files, and the champion from Unity Catalog. Each batch is
 **appended** to the Delta table `promolift_ai.scoring.targets` (with a
 `deployed_git_commit` column), and the view
-`promolift_ai.scoring.targets_latest` shows only the most recent batch. The
-weekly schedule is defined but paused: the X5 snapshot is static.
+`promolift_ai.scoring.targets_latest` shows only the most recent batch. Each
+batch's drift report is appended to `promolift_ai.scoring.drift` -- also when
+severe drift stops the batch. The weekly schedule is defined but paused: the
+X5 snapshot is static.
 
 One-time upload of the raw files to the volume (byte-for-byte copies):
 
@@ -431,6 +438,33 @@ The `dev` target uses development mode: the job is created as
 `[dev <user>] promolift-score-clients`, runs as the deploying user, and its
 schedule stays paused. Needs `USE SCHEMA`, `CREATE TABLE`, `SELECT`, `MODIFY`
 on `promolift_ai.scoring` and `READ VOLUME` on its `raw_data` volume.
+
+## Monitoring
+
+### Feature drift
+
+Every scoring batch is compared, feature by feature, with the training
+clients of the model that scores it (`monitoring/drift.py`). The registered
+model carries a drift reference: each feature binned, with the expected share
+of every bin --
+
+- numeric features with at most 10 distinct values (flags, small counts):
+  one bin per value, plus "other";
+- other numeric features: decile bins;
+- `gender`: one bin per level, plus "other";
+- and a missing-value bin for every feature.
+
+A batch is binned the same way and each feature scored with the population
+stability index, PSI = Σ (actual − expected) · ln(actual / expected).
+Thresholds live in `configs/monitoring.yaml`:
+
+| Key | Default | Effect |
+|---|---|---|
+| `drift.warn_psi` | 0.1 | Any feature above it tags the run `drift_status=warn` |
+| `drift.fail_psi` | 0.25 | Any feature above it fails the run before a send list is written |
+
+Models registered before drift references carried bin shares (version 1)
+can't be checked; scoring with them stops and asks to re-register.
 
 ## Status
 

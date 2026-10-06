@@ -9,6 +9,7 @@ import polars as pl
 import pytest
 from mlflow import MlflowClient
 
+from promolift.monitoring.drift import DriftError, DriftThresholds
 from promolift.serving.pyfunc import ContractError, FeatureContract
 from promolift.serving.registration import register, set_champion
 from promolift.serving.scoring import (
@@ -208,3 +209,77 @@ def test_batches_are_kept_and_follow_the_champion(
     assert first.path.exists()
     assert second.path.exists()
     assert len(list(output.glob("send_list_*.parquet"))) == 2
+
+
+# --- drift ---------------------------------------------------------------------------
+
+
+def test_scoring_logs_the_drift_of_every_feature(
+    scoring_champion, client_features, lineage_dirs, tmp_path: Path
+) -> None:
+    result = run_batch_scoring(
+        client_features,
+        send_share=0.5,
+        model_name=scoring_champion.name,
+        output_dir=tmp_path / "scoring",
+        config=scoring_champion.config,
+        lineage=lineage_dirs,
+    )
+
+    contract_columns = set(scoring_champion.packaged.contract.columns)
+    assert set(result.drift["feature"]) == contract_columns
+    assert set(result.drift["scoring_run_id"]) == {result.run_id}
+    run = MlflowClient(tracking_uri=scoring_champion.config.tracking_uri).get_run(result.run_id)
+    assert run.data.tags["drift_status"] in {"ok", "warn"}
+    assert {f"psi_{c}" for c in contract_columns} <= set(run.data.metrics)
+    assert run.data.params["drift_fail_psi"] == "0.25"
+
+
+def test_severe_drift_stops_the_batch_but_records_the_drift(
+    scoring_champion, client_features, lineage_dirs, tmp_path: Path
+) -> None:
+    # Every client's gender is now "U", a level the training clients never had.
+    drifted = client_features.with_columns(pl.lit("U").alias("gender"))
+    recorded = []
+    written = []
+
+    with pytest.raises(DriftError, match="gender"):
+        run_batch_scoring(
+            drifted,
+            send_share=0.5,
+            model_name=scoring_champion.name,
+            output_dir=tmp_path / "scoring",
+            config=scoring_champion.config,
+            lineage=lineage_dirs,
+            sink=written.append,
+            drift_sink=recorded.append,
+        )
+
+    assert written == []
+    assert not (tmp_path / "scoring").exists()
+    (report,) = recorded
+    assert report.filter(pl.col("feature") == "gender")["status"][0] == "fail"
+    client = MlflowClient(tracking_uri=scoring_champion.config.tracking_uri)
+    (run,) = client.search_runs([client.get_experiment_by_name("promolift-scoring").experiment_id])
+    assert run.info.status == "FAILED"
+    assert run.data.tags["drift_status"] == "fail"
+
+
+def test_drift_thresholds_decide_what_blocks(
+    scoring_champion, client_features, lineage_dirs, tmp_path: Path
+) -> None:
+    drifted = client_features.with_columns(pl.lit("U").alias("gender"))
+
+    result = run_batch_scoring(
+        drifted,
+        send_share=0.5,
+        model_name=scoring_champion.name,
+        output_dir=tmp_path / "scoring",
+        config=scoring_champion.config,
+        lineage=lineage_dirs,
+        drift_thresholds=DriftThresholds(warn_psi=0.1, fail_psi=100.0),
+    )
+
+    assert result.targets.height == 2
+    run = MlflowClient(tracking_uri=scoring_champion.config.tracking_uri).get_run(result.run_id)
+    assert run.data.tags["drift_status"] == "warn"

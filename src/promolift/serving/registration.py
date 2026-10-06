@@ -23,7 +23,8 @@ from mlflow.models import infer_signature
 
 import promolift
 from promolift.models.base import UpliftModel
-from promolift.serving.pyfunc import FeatureContract, UpliftPyfunc, drift_reference
+from promolift.monitoring.drift import build_reference
+from promolift.serving.pyfunc import FeatureContract, UpliftPyfunc
 from promolift.tracking.mlflow_tracking import (
     Experiment,
     TrackingConfig,
@@ -115,6 +116,8 @@ def log_packaged_model(
     through_contract = np.asarray(model.predict_uplift(contract.prepare(model_input)), dtype=float)
     if not np.array_equal(expected, through_contract):
         raise ParityError("Scoring the canonical input changes the model's predictions")
+    # Built from the canonical input: batch scoring checks drift on that same layout.
+    reference = build_reference(model_input, contract.categories)
 
     with start_run(
         Experiment.MODELS,
@@ -128,14 +131,14 @@ def log_packaged_model(
         mlflow.log_metric("n_fit_clients", len(features))
         info = mlflow.pyfunc.log_model(
             name=MODEL_ARTIFACT,
-            python_model=UpliftPyfunc(model, contract),
+            python_model=UpliftPyfunc(model, contract, reference),
             signature=infer_signature(model_input.head(1_000), expected[:1_000]),
             input_example=model_input.head(5),
             code_paths=[str(Path(promolift.__file__).parent)],
             pip_requirements=pip_requirements(),
         )
         mlflow.log_dict(contract.as_dict(), "contract/feature_contract.json")
-        mlflow.log_dict(drift_reference(features, contract), "contract/drift_reference.json")
+        mlflow.log_dict(reference, "contract/drift_reference.json")
         return PackagedModel(run.info.run_id, info.model_uri, contract, model_input, expected)
 
 
