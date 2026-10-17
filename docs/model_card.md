@@ -80,6 +80,10 @@ From `docs/final_results.md` (40,008 clients never used before):
   client behavior, offers, or SMS fatigue can shift the effect. The drift
   reference (`contract/drift_reference.json`: per-feature deciles, null
   shares, `gender` shares of the training clients) supports monitoring that.
+  Batch scoring also holds back a random control group of the selected
+  clients, and `scripts/evaluate_campaign.py` compares a campaign's realized
+  uplift with this model's prediction, so a shifted effect shows up in results
+  instead of being assumed away.
 - **Fairness.** `gender` and `age` are inputs. Their effect on who gets
   promotions has not been reviewed.
 
