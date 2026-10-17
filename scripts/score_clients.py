@@ -5,8 +5,10 @@ Builds the base features for every client in ``clients.csv``, loads
 and first checks the batch's features for drift against the champion's
 training reference (thresholds in ``configs/monitoring.yaml``): severe drift
 stops the run before any send list is written. It then scores and ranks
-every client and flags the top ``send_share`` of ``configs/business.yaml`` to
-text. The batch is written to the gitignored ``data/interim/scoring/``
+every client, selects the top ``send_share`` of ``configs/business.yaml``, and
+holds back a random ``holdout_share`` of them, unsent, as the control group for
+measuring the campaign (``scripts/evaluate_campaign.py``). The rest are flagged
+to text. The batch is written to the gitignored ``data/interim/scoring/``
 (never overwriting earlier batches) and recorded as a run in
 ``promolift-scoring``:
 
@@ -58,6 +60,7 @@ def main() -> int:
         result = run_batch_scoring(
             features,
             send_share=config.send_share,
+            holdout_share=config.holdout_share,
             model_name=args.model_name,
             output_dir=args.output_dir,
             config=tracking,
@@ -74,14 +77,17 @@ def main() -> int:
     for row in result.drift.head(_SHOWN_FEATURES).iter_rows(named=True):
         print(f"  {row['feature']:24s} {row['psi']:.4f}  {row['status']}")
     sent = int(result.targets["send"].sum())
+    held_back = int(result.targets["holdout"].sum())
     print(
         f"\nModel version {result.model_version}: {result.targets.height:,} clients scored, "
-        f"{sent:,} flagged to text (top {config.send_share:.0%})"
+        f"top {config.send_share:.0%} selected: {sent:,} flagged to text, "
+        f"{held_back:,} held back as the control group"
     )
     print("\nBy decile (1 = highest predicted uplift):")
     for row in decile_summary(result.targets).iter_rows(named=True):
         print(
             f"  {row['decile']:2d}: {row['clients']:7,} clients, {row['sent']:7,} sent, "
+            f"{row['held_back']:6,} held back, "
             f"score {row['min_score']:+.4f} .. {row['max_score']:+.4f} "
             f"(mean {row['mean_score']:+.4f})"
         )
