@@ -79,6 +79,7 @@ def test_the_committed_config_is_valid() -> None:
     assert config.break_even_grid == tuple(sorted(config.break_even_grid))
     assert config.send_share is not None
     assert 0 < config.send_share < 1
+    assert 0 < config.holdout_share < 1
 
 
 def test_send_share_is_optional_and_must_be_a_fraction(tmp_path: Path) -> None:
@@ -86,6 +87,19 @@ def test_send_share_is_optional_and_must_be_a_fraction(tmp_path: Path) -> None:
     assert load_business_config(_write(tmp_path, _VALID + "send_share: 0.38\n")).send_share == 0.38
     with pytest.raises(ValueError, match="send_share"):
         load_business_config(_write(tmp_path, _VALID + "send_share: 1.5\n"))
+
+
+def test_holdout_share_defaults_to_none_held_back_and_must_stay_below_one(tmp_path: Path) -> None:
+    assert load_business_config(_write(tmp_path, _VALID)).holdout_share == 0.0
+    assert (
+        load_business_config(_write(tmp_path, _VALID + "holdout_share: null\n")).holdout_share == 0
+    )
+    assert (
+        load_business_config(_write(tmp_path, _VALID + "holdout_share: 0.1\n")).holdout_share == 0.1
+    )
+    for bad in ("1.0", "-0.1"):
+        with pytest.raises(ValueError, match="holdout_share"):
+            load_business_config(_write(tmp_path, _VALID + f"holdout_share: {bad}\n"))
 
 
 def test_average_transaction_counts_each_transaction_once(feature_raw_dir: Path) -> None:

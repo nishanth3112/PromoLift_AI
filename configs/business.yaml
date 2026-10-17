@@ -21,3 +21,9 @@ break_even_grid: [0.005, 0.01, 0.02, 0.03, 0.04, 0.05, 0.075, 0.1]
 # (docs/targeting_results.md) for the values above; re-run the targeting
 # analysis and update this when the economics change.
 send_share: 0.38
+# Share of the clients selected by send_share that are held back as a random
+# control group: they are scored and ranked like the rest but not texted, so the
+# campaign's realized uplift can be measured (scripts/evaluate_campaign.py).
+# 0 = text everyone selected. The control group costs the uplift it forgoes:
+# at 0.10, about 1 in 10 of the best prospects is not texted.
+holdout_share: 0.10
