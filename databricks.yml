@@ -96,3 +96,26 @@ targets:
     default: true
     workspace:
       host: https://dbc-800311cf-218a.cloud.databricks.com
+
+  # Deployed by CI on merge to main (.github/workflows/deploy.yml) as the
+  # promolift-cicd service principal, which also runs the job. Separate tables
+  # from dev, so experiments with the dev job never touch the production history.
+  prod:
+    mode: production
+    git:
+      branch: main
+    workspace:
+      host: https://dbc-800311cf-218a.cloud.databricks.com
+      # One copy only, in the service principal's folder, whoever deploys.
+      root_path: /Workspace/Users/c92b7213-248e-47fe-8b47-b8cc159e4921/.bundle/${bundle.name}/${bundle.target}
+    run_as:
+      service_principal_name: c92b7213-248e-47fe-8b47-b8cc159e4921
+    permissions:
+      - user_name: manoharan.ni@northeastern.edu
+        level: CAN_MANAGE
+      - service_principal_name: c92b7213-248e-47fe-8b47-b8cc159e4921
+        level: CAN_MANAGE
+    variables:
+      targets_table: promolift_ai.scoring_prod.targets
+      latest_view: promolift_ai.scoring_prod.targets_latest
+      drift_table: promolift_ai.scoring_prod.drift
