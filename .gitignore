@@ -63,6 +63,7 @@ env/
 # ==========================================
 .pytest_cache/
 .coverage
+coverage.xml
 htmlcov/
 
 
