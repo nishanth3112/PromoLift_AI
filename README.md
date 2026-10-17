@@ -532,6 +532,43 @@ do nothing) and writes nothing:
 uv run python scripts/evaluate_campaign.py --demo --effect-scale 0.5
 ```
 
+## Explainability
+
+`scripts/explain_model.py` shows which features drive a client's predicted
+uplift (`explainability/`). It loads the champion, takes a random sample of
+train + val clients (20,000 by default; the test split is never loaded), and
+splits each client's score among the features with exact TreeSHAP -- LightGBM's
+own `pred_contrib`, so no extra dependency. It reports:
+
+- **Global importance:** mean absolute contribution per feature and its share
+  of the total, with a direction (higher value raises or lowers the score, or
+  mixed) and the effect of a missing value.
+- **Segments:** the same importance inside predicted-uplift tiers (top 10%,
+  next 30%, rest), gender, and age bands.
+- **Dependence:** how the score moves along the leading features, bin by bin.
+
+The champion is a class-transformation model, `uplift = 2 * P(z) - 1` from one
+LightGBM classifier, and SHAP splits that classifier's log-odds. Each client's
+contributions are rescaled by the one factor that makes them add up exactly to
+their score, so they read in percentage points of uplift and
+`base + sum(contributions) = score` holds for every client (checked, and
+logged as `additivity_error`). Other models (S-learner, forests) score uplift
+as a difference of predictions and are refused.
+
+```bash
+uv run --env-file .env python scripts/explain_model.py
+```
+
+Options: `--model-name`, `--n-rows`, `--seed`, `--no-log` (print only). One run
+is logged to `promolift-explainability`: the importance, segment, and
+dependence tables, two figures, a summary, and each feature's importance as a
+metric; no client-level contributions. Results: `docs/explainability_results.md`.
+
+Read it for what it is. SHAP describes what the model does, not what the
+features cause: correlated features share credit, and a feature the model
+leans on may not move buying. It is also a view of a weak model (see the model
+card), so small differences between features are noise.
+
 ## CI/CD
 
 Four GitHub Actions workflows in `.github/workflows/`:
