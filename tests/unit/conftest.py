@@ -185,3 +185,21 @@ def make_campaign_batch() -> Callable[..., pl.DataFrame]:
         )
 
     return make
+
+
+@pytest.fixture(scope="session")
+def explained_model(sure_things_data: dict) -> SimpleNamespace:
+    """A class-transformation model whose uplift depends on ``b`` alone, plus unseen clients.
+
+    Persuadables (b < 0.5) gain 30 points from the SMS and sure things (b >= 0.5)
+    none, so ``b`` is the only feature with real signal; ``noise`` and ``segment`` have none.
+    """
+    from promolift.models.registry import build_model
+
+    features, treatment, outcome = sure_things_data["train"]
+    model = build_model(
+        "class_transformation",
+        seed=0,
+        overrides={"n_estimators": 80, "learning_rate": 0.1, "min_child_samples": 50},
+    ).fit(features, treatment, outcome)
+    return SimpleNamespace(model=model, features=sure_things_data["holdout"][0])
