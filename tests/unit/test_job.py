@@ -26,11 +26,13 @@ class FakeSpark:
     def __init__(self) -> None:
         self.frames: list[pd.DataFrame] = []
         self.writes: list[tuple[str, str]] = []
+        self.options: list[dict[str, str]] = []
         self.statements: list[str] = []
 
     def createDataFrame(self, frame: pd.DataFrame) -> "FakeSpark":
         self.frames.append(frame)
         self._mode = None
+        self._options: dict[str, str] = {}
         return self
 
     @property
@@ -41,8 +43,13 @@ class FakeSpark:
         self._mode = mode
         return self
 
+    def option(self, key: str, value: str) -> "FakeSpark":
+        self._options[key] = value
+        return self
+
     def saveAsTable(self, table: str) -> None:
         self.writes.append((self._mode, table))
+        self.options.append(self._options)
 
     def sql(self, statement: str) -> None:
         self.statements.append(statement)
@@ -63,6 +70,8 @@ def test_write_targets_appends_the_batch_and_refreshes_the_latest_view() -> None
     )  # fmt: skip
 
     assert spark.writes == [("append", "cat.sch.targets")]
+    # Older batches have no holdout column, so the append must be allowed to add it.
+    assert spark.options == [{"mergeSchema": "true"}]
     written = spark.frames[0]
     assert written["deployed_git_commit"].tolist() == ["abc123", "abc123"]
     assert written["client_id"].tolist() == ["a", "b"]
@@ -98,12 +107,12 @@ def test_parse_args_requires_the_raw_data_and_config() -> None:
         parse_args(["--raw-dir", "/Volumes/c/s/raw"])
 
 
-def _business_config(tmp_path: Path, send_share: str) -> Path:
+def _business_config(tmp_path: Path, send_share: str, holdout_share: str = "0.0") -> Path:
     path = tmp_path / "business.yaml"
     path.write_text(
         "currency: RUB\nsms_cost: 3.0\ngross_margin: 0.24\nmargin_per_purchase: null\n"
         "budget: null\ncampaign_clients: null\nbreak_even_grid: [0.03]\n"
-        f"send_share: {send_share}\n"
+        f"send_share: {send_share}\nholdout_share: {holdout_share}\n"
     )
     return path
 
@@ -140,6 +149,28 @@ def test_run_job_scores_the_raw_data_and_writes_both_tables(
     assert run.data.tags["deployed_git_commit"] == "abc123"
     assert run.data.tags["targets_table"] == "cat.sch.targets"
     assert run.data.tags["trigger"] == "job"
+
+
+def test_run_job_holds_back_the_configured_control_group(
+    scoring_champion, feature_raw_dir: Path, tmp_path: Path
+) -> None:
+    spark = FakeSpark()
+
+    run_job(
+        feature_raw_dir,
+        _business_config(tmp_path, "1.0", holdout_share="0.5"),
+        model_name=scoring_champion.name,
+        table="cat.sch.targets",
+        latest_view="cat.sch.latest",
+        drift_table="cat.sch.drift",
+        tracking=scoring_champion.config,
+        spark=spark,
+        output_dir=tmp_path / "out",
+    )
+
+    written = spark.frames[-1]
+    assert (written["send"].sum(), written["holdout"].sum()) == (1, 1)
+    assert spark.options[-1] == {"mergeSchema": "true"}
 
 
 def test_run_job_needs_a_send_share(feature_raw_dir: Path, tmp_path: Path) -> None:

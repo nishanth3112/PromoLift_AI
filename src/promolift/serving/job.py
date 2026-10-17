@@ -7,7 +7,8 @@ and Spark to write the table. The deployed git commit arrives as a parameter
 (the installed wheel has no ``.git``) and is recorded on the run and in every
 row.
 
-Each batch is appended to ``promolift_ai.scoring.targets``; the
+Each batch is appended to ``promolift_ai.scoring.targets`` (with the control
+group's ``holdout`` flag; earlier batches predate it and read as null); the
 ``targets_latest`` view always shows the most recent batch only.
 
 Every ``promolift`` import here is at module level on purpose: loading the
@@ -65,7 +66,9 @@ def write_targets(
     """
     table, latest_view = _checked_name(table), _checked_name(latest_view)
     rows = targets.with_columns(pl.lit(git_commit).alias("deployed_git_commit")).to_pandas()
-    spark.createDataFrame(rows).write.mode("append").saveAsTable(table)
+    # mergeSchema lets batches written before the holdout column existed share the table.
+    writer = spark.createDataFrame(rows).write.mode("append").option("mergeSchema", "true")
+    writer.saveAsTable(table)
     spark.sql(_LATEST_VIEW_SQL.format(view=latest_view, table=table))
 
 
@@ -105,6 +108,7 @@ def run_job(
     return run_batch_scoring(
         features,
         send_share=config.send_share,
+        holdout_share=config.holdout_share,
         model_name=model_name,
         output_dir=output_dir if output_dir is not None else Path(tempfile.mkdtemp()),
         config=tracking,
@@ -155,9 +159,11 @@ def main(argv: Sequence[str] | None = None) -> None:
         spark=SparkSession.builder.getOrCreate(),
     )
     sent = int(result.targets["send"].sum())
+    held_back = int(result.targets["holdout"].sum())
     worst = result.drift.row(0, named=True)
     print(
         f"Drift: max PSI {worst['psi']:.4f} ({worst['feature']}, {worst['status']}). "
         f"Model version {result.model_version}: {result.targets.height:,} clients scored, "
-        f"{sent:,} flagged; appended to {args.table}; run {result.run_id}"
+        f"{sent:,} flagged, {held_back:,} held back as the control group; "
+        f"appended to {args.table}; run {result.run_id}"
     )
