@@ -31,4 +31,4 @@ Keep reusable logic in `src/promolift/`; notebooks and `scripts/` only orchestra
 
 ## Definition of Done
 
-Add deterministic tests on synthetic temp fixtures. Keep CI free of raw data, credentials, and external services. Document new configuration and scripts in the README. Build only the current roadmap phase; don't implement CI/CD or deployment beyond the scoring job unless asked. Never commit `.env`, credentials, data, or `mlruns/`.
+Add deterministic tests on synthetic temp fixtures. Keep CI tests free of raw data, credentials, and external services (only the bundle workflows use Databricks secrets; they never run tests). Document new configuration and scripts in the README. Build only the current roadmap phase; don't implement explainability or other new capabilities unless asked. Never commit `.env`, credentials, data, or `mlruns/`.

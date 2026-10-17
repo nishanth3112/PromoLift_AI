@@ -532,6 +532,71 @@ do nothing) and writes nothing:
 uv run python scripts/evaluate_campaign.py --demo --effect-scale 0.5
 ```
 
+## CI/CD
+
+Four GitHub Actions workflows in `.github/workflows/`:
+
+| Workflow | When | What |
+|---|---|---|
+| `ci.yml` | every push to main and every pull request | format, lint, and the unit tests with coverage on Ubuntu, macOS, and Windows |
+| `bundle-validate.yml` | pull requests | `databricks bundle validate --strict` for the `dev` and `prod` targets |
+| `deploy.yml` | push to main | validates, then deploys the `prod` target; waits for approval |
+| `score-prod.yml` | manual | runs the production scoring job and waits for it |
+
+**Coverage.** CI runs `pytest --cov` (branch coverage of `promolift`) and fails
+below the floor `fail_under` in `pyproject.toml` (97%; measured 97.78%, the
+margin absorbs OS-specific branches). The Ubuntu job writes the table to the
+run's summary page and uploads `coverage.xml`. Raise the floor as coverage
+grows; locally, `uv run pytest --cov` checks it too.
+
+**The prod target** (`databricks.yml`) runs in production mode: the job is
+owned by, deployed by, and run as the service principal `promolift-cicd`
+(OAuth M2M, never a person's token), deploys only from `main`, and keeps one
+copy under the principal's workspace folder. Its tables are separate from dev:
+`promolift_ai.scoring_prod.targets`, `.targets_latest`, and `.drift`. The
+schedule stays paused, as in dev, since the X5 snapshot is static. Pull-request
+CI validates but never deploys; a merge to `main` deploys once the
+`production` environment's reviewer approves. Run a production batch from the
+Actions tab (`Score clients (prod)`), or locally with
+`databricks bundle run score_clients --target prod --profile promolift`.
+
+**Supply chain.** Every action is pinned to a commit SHA (the tag is in the
+comment beside it) and Dependabot proposes updates weekly
+(`.github/dependabot.yml`). The Databricks credentials are passed only to the
+single step that runs a `databricks bundle` command, never to the whole job.
+
+Deploys come from CI, not a laptop. `databricks bundle deploy --target prod`
+works only from a checkout of `main`, as the principal or an admin.
+
+### One-time setup
+
+1. **Service principal.** Workspace admin settings, Identity and access,
+   Service principals: add `promolift-cicd` and generate an OAuth secret
+   (shown once; it expires, so rotate it before then).
+2. **GitHub.** Repository secrets `DATABRICKS_HOST` (the workspace URL, no
+   trailing slash), `DATABRICKS_CLIENT_ID` (the principal's application ID),
+   and `DATABRICKS_CLIENT_SECRET`; and an environment named `production` with
+   a required reviewer and `main` as its only deployment branch.
+3. **Unity Catalog**, as a metastore or catalog admin (replace `<client-id>`
+   with the application ID):
+
+   ```sql
+   GRANT USE CATALOG ON CATALOG promolift_ai TO `<client-id>`;
+   GRANT USE SCHEMA ON SCHEMA promolift_ai.models TO `<client-id>`;
+   GRANT EXECUTE ON FUNCTION promolift_ai.models.uplift_targeting TO `<client-id>`;
+   GRANT READ VOLUME ON VOLUME promolift_ai.scoring.raw_data TO `<client-id>`;
+   CREATE SCHEMA IF NOT EXISTS promolift_ai.scoring_prod;
+   GRANT USE SCHEMA, CREATE TABLE ON SCHEMA promolift_ai.scoring_prod TO `<client-id>`;
+   ```
+
+   The model grant is `ON FUNCTION`: this SQL warehouse rejects `ON MODEL`.
+   The principal creates the prod tables and view, so it owns them; grant
+   people `SELECT ON SCHEMA promolift_ai.scoring_prod` to read them.
+
+The dev job (`databricks bundle deploy`, no target) is unchanged: it runs as
+the deploying user against `promolift_ai.scoring.*`, and that user needs the
+grants listed under [Scheduled scoring on Databricks](#scheduled-scoring-on-databricks).
+
 ## Status
 
 Under active development.
