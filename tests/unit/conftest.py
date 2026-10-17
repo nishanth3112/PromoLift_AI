@@ -155,3 +155,33 @@ def scoring_champion(
     )
     set_champion(register(packaged, name, config), name, config)
     return SimpleNamespace(name=name, config=config, packaged=packaged)
+
+
+@pytest.fixture
+def make_campaign_batch() -> Callable[..., pl.DataFrame]:
+    """A scored send list with a seeded control group, built by the real ``send_list``."""
+    from datetime import UTC, datetime
+
+    from promolift.serving.scoring import send_list
+
+    def make(
+        n: int = 4_000,
+        *,
+        send_share: float = 0.5,
+        holdout_share: float = 0.2,
+        run_id: str = "run-a",
+        seed: int = 0,
+    ) -> pl.DataFrame:
+        scores = np.random.default_rng(seed).normal(0.03, 0.04, n)
+        return send_list(
+            pl.Series([f"c{i:05d}" for i in range(n)]),
+            scores,
+            send_share=send_share,
+            holdout_share=holdout_share,
+            model_name="uplift_test",
+            model_version="1",
+            scored_at=datetime(2026, 10, 6, tzinfo=UTC),
+            scoring_run_id=run_id,
+        )
+
+    return make

@@ -7,8 +7,8 @@ and converted to the model's canonical input exactly as training converted
 them (booleans to 0/1, then the contract's float64 / string layout).
 
 Each batch is one row per client: uplift score, rank (1 = highest), decile
-(1 = top 10%), the send flag, and the model version, scoring time, and run
-that produced it. Batches are written as separate files and never
+(1 = top 10%), the send and holdout flags, and the model version, scoring
+time, and run that produced it. Batches are written as separate files and never
 overwritten, so every past decision can be compared with what happened.
 
 Before scoring, the batch's features are checked for drift against the
@@ -19,6 +19,7 @@ written.
 
 from __future__ import annotations
 
+import hashlib
 import math
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -56,6 +57,7 @@ SEND_LIST_COLUMNS = (
     "rank",
     "decile",
     "send",
+    "holdout",
     "model_name",
     "model_version",
     "scored_at",
@@ -107,25 +109,39 @@ def model_input(features: pl.DataFrame, contract: FeatureContract) -> pd.DataFra
     return contract.to_input(selected.to_pandas())
 
 
+def _holdout_positions(scoring_run_id: str, n_selected: int, n_holdout: int) -> np.ndarray:
+    """Positions among the selected clients to hold back, drawn from the batch's own seed.
+
+    Seeding from the run id makes the draw reproducible for a batch yet new for
+    every batch, and independent of the scores, so the control group is a
+    random sample of the selected clients.
+    """
+    seed = int.from_bytes(hashlib.sha256(scoring_run_id.encode()).digest()[:8], "big")
+    return np.random.default_rng(seed).choice(n_selected, size=n_holdout, replace=False)
+
+
 def send_list(
     client_ids: pl.Series,
     scores: np.ndarray,
     *,
     send_share: float,
+    holdout_share: float = 0.0,
     model_name: str,
     model_version: str,
     scored_at: datetime,
     scoring_run_id: str,
 ) -> pl.DataFrame:
-    """Rank clients by score and flag the top ``send_share`` to text.
+    """Rank clients by score, select the top ``send_share``, and hold some of them back.
 
     Ties are broken by ``client_id`` so the ranking is deterministic. The
-    number sent is ``round(send_share * n)``; deciles split the ranking into
-    tenths (1 = highest).
+    number selected is ``round(send_share * n)``; deciles split the ranking
+    into tenths (1 = highest). Of the selected, ``round(holdout_share *
+    selected)`` chosen at random are the control group (``holdout``, not
+    sent); the rest are ``send``.
 
     Raises:
-        ValueError: If lengths differ, a score is not finite, or
-            ``send_share`` is outside [0, 1].
+        ValueError: If lengths differ, a score is not finite, ``send_share``
+            is outside [0, 1], or ``holdout_share`` is outside [0, 1).
     """
     if len(client_ids) != len(scores):
         raise ValueError("client_ids and scores must be the same length")
@@ -133,19 +149,27 @@ def send_list(
         raise ValueError("scores contain NaN or infinite values")
     if not 0 <= send_share <= 1:
         raise ValueError("send_share must be in [0, 1]")
+    if not 0 <= holdout_share < 1:
+        raise ValueError("holdout_share must be in [0, 1)")
     n = len(scores)
-    n_send = round(send_share * n)
+    n_selected = round(send_share * n)
+    held_back_mask = np.zeros(n, dtype=bool)
+    held_back_mask[
+        _holdout_positions(scoring_run_id, n_selected, round(holdout_share * n_selected))
+    ] = True
     ranked = (
         pl.DataFrame({"client_id": client_ids, "uplift_score": np.asarray(scores, dtype=float)})
         .sort(["uplift_score", "client_id"], descending=[True, False])
         .with_row_index("rank", offset=1)
+        .with_columns(pl.Series("holdout", held_back_mask))
     )
     return ranked.select(
         "client_id",
         "uplift_score",
         pl.col("rank").cast(pl.Int64),
         ((pl.col("rank") - 1) * 10 // max(n, 1) + 1).cast(pl.Int8).alias("decile"),
-        (pl.col("rank") <= n_send).alias("send"),
+        ((pl.col("rank") <= n_selected) & ~pl.col("holdout")).alias("send"),
+        pl.col("holdout"),
         pl.lit(model_name).alias("model_name"),
         pl.lit(model_version).alias("model_version"),
         pl.lit(scored_at).dt.replace_time_zone("UTC").alias("scored_at"),
@@ -154,12 +178,13 @@ def send_list(
 
 
 def decile_summary(targets: pl.DataFrame) -> pl.DataFrame:
-    """Clients, sends, and score range per decile -- a quick check of a batch."""
+    """Clients, sends, holdouts, and score range per decile -- a quick check of a batch."""
     return (
         targets.group_by("decile")
         .agg(
             pl.len().alias("clients"),
             pl.col("send").sum().alias("sent"),
+            pl.col("holdout").sum().alias("held_back"),
             pl.col("uplift_score").mean().alias("mean_score"),
             pl.col("uplift_score").min().alias("min_score"),
             pl.col("uplift_score").max().alias("max_score"),
@@ -212,6 +237,7 @@ def run_batch_scoring(
     features: pl.DataFrame,
     *,
     send_share: float,
+    holdout_share: float = 0.0,
     model_name: str = DEFAULT_MODEL_NAME,
     output_dir: Path | None = None,
     scored_at: datetime | None = None,
@@ -232,7 +258,9 @@ def run_batch_scoring(
     Args:
         features: One row per client: ``client_id`` plus the contract columns
             (``models.dataset.build_model_features``).
-        send_share: Fraction of clients to text (``business.yaml``).
+        send_share: Fraction of clients to select for texting (``business.yaml``).
+        holdout_share: Fraction of the selected clients held back, unsent, as a
+            control group for measuring the campaign (``business.yaml``).
         lineage: ``repo_dir`` / ``data_dir`` / ``processed_dir`` overrides
             (for tests, or the raw volume in the Databricks job).
         tags: Extra run tags.
@@ -293,6 +321,7 @@ def run_batch_scoring(
             features["client_id"],
             scores,
             send_share=send_share,
+            holdout_share=holdout_share,
             model_name=model_name,
             model_version=champion.version,
             scored_at=scored_at,
@@ -306,11 +335,12 @@ def run_batch_scoring(
             sink(targets)
 
         sent = targets.filter(pl.col("send"))
-        mlflow.log_params({"send_share": send_share})
+        mlflow.log_params({"send_share": send_share, "holdout_share": holdout_share})
         mlflow.log_metrics(
             {
                 "n_clients": targets.height,
                 "n_send": sent.height,
+                "n_holdout": int(targets["holdout"].sum()),
                 "mean_score": float(targets["uplift_score"].mean()),
                 "mean_score_sent": float(sent["uplift_score"].mean()) if sent.height else math.nan,
                 "min_score_sent": float(sent["uplift_score"].min()) if sent.height else math.nan,

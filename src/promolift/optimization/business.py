@@ -36,6 +36,7 @@ class BusinessConfig:
     campaign_clients: int | None
     break_even_grid: tuple[float, ...]
     send_share: float | None = None
+    holdout_share: float = 0.0
 
     def margin(self, average_transaction: float) -> float:
         """Margin per extra purchase: the configured value, else basket value x gross margin."""
@@ -63,6 +64,8 @@ def _check(config: BusinessConfig) -> None:
         raise ValueError("break_even_grid must be a non-empty list of non-negative uplifts")
     if config.send_share is not None and not 0 <= config.send_share <= 1:
         raise ValueError("send_share must be a fraction in [0, 1]")
+    if not 0 <= config.holdout_share < 1:
+        raise ValueError("holdout_share must be a fraction in [0, 1)")
 
 
 def load_business_config(path: Path | None = None) -> BusinessConfig:
@@ -88,6 +91,7 @@ def load_business_config(path: Path | None = None) -> BusinessConfig:
         ),
         break_even_grid=tuple(float(r) for r in raw["break_even_grid"]),
         send_share=None if raw.get("send_share") is None else float(raw["send_share"]),
+        holdout_share=float(raw.get("holdout_share") or 0.0),
     )
     _check(config)
     return config

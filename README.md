@@ -10,8 +10,7 @@ Raw files are expected under `data/raw/` (`clients.csv`, `products.csv`,
 `purchases.csv`, `uplift_train.csv`, `uplift_test.csv`,
 `uplift_sample_submission.csv`).
 
-**Raw X5 data is not version controlled.** `data/raw/`, `data/interim/`, and
-`data/processed/` are gitignored — you must place the files there yourself.
+**Raw X5 data is not version controlled.** `data/raw/`, `data/interim/`, and `data/processed/` are gitignored.
 `purchases.csv` is ~4.2 GB; never load it eagerly, use the Polars lazy
 loaders in `src/promolift/data/loader.py`.
 
@@ -376,10 +375,18 @@ whole client base:
    ([Monitoring](#monitoring)) and stops before writing anything if a feature
    drifted severely; then scores every client;
 5. ranks clients by score (ties broken by `client_id`), assigns deciles, and
-   flags the top `send_share` to text.
+   selects the top `send_share`;
+6. holds back a random `holdout_share` of the selected clients as a control
+   group -- ranked like the rest, but not texted -- so the campaign's real
+   effect can be measured ([Campaign evaluation](#campaign-evaluation)). The
+   rest are flagged `send`.
 
 `send_share` lives in `configs/business.yaml` (0.38: the max-expected-profit
-depth of the targeting analysis); update it when the economics change. Each
+depth of the targeting analysis); update it when the economics change.
+`holdout_share` (0.10) is the cost of knowing whether the model works: about
+one in ten of the best prospects is not texted. The draw is seeded by the
+batch's run id, so it is reproducible for a batch and new for every batch,
+and independent of the scores. Each
 batch is written to the gitignored `data/interim/scoring/` as
 `send_list_<timestamp>_<run>.parquet` and never overwritten:
 
@@ -390,13 +397,14 @@ batch is written to the gitignored `data/interim/scoring/` as
 | `rank` | 1 = highest score |
 | `decile` | 1 = top 10% |
 | `send` | Text this client |
+| `holdout` | Selected but held back as the control group (never `send`) |
 | `model_name`, `model_version` | The model version that scored the batch |
 | `scored_at`, `scoring_run_id` | When, and the MLflow run that records it |
 
 The run in `promolift-scoring` records the model version, counts, a
 per-decile score summary, and every feature's drift (`psi_<feature>`
-metrics, a `drift_status` tag, `drift/drift_report.csv`), not the client
-list.
+metrics, a `drift_status` tag, `drift/drift_report.csv`), and the numbers
+sent and held back, not the client list.
 
 ```bash
 uv run --env-file .env python scripts/score_clients.py   # about a minute
@@ -412,7 +420,8 @@ serverless job, `promolift-score-clients`. Its wheel task
 volume `/Volumes/promolift_ai/scoring/raw_data`, the business config from the
 bundle's synced files, and the champion from Unity Catalog. Each batch is
 **appended** to the Delta table `promolift_ai.scoring.targets` (with a
-`deployed_git_commit` column), and the view
+`deployed_git_commit` column; the append adds the `holdout` column, which is
+null for batches written before it existed), and the view
 `promolift_ai.scoring.targets_latest` shows only the most recent batch. Each
 batch's drift report is appended to `promolift_ai.scoring.drift` -- also when
 severe drift stops the batch. The weekly schedule is defined but paused: the
@@ -465,6 +474,63 @@ Thresholds live in `configs/monitoring.yaml`:
 
 Models registered before drift references carried bin shares (version 1)
 can't be checked; scoring with them stops and asks to re-register.
+
+### Campaign evaluation
+
+Drift says the inputs still look like training; it can't say the model still
+works. A campaign can: the batch texted its top clients and held a random
+share of them back, so the difference in purchase rate between the two groups
+is the campaign's real effect on the clients the model chose.
+`scripts/evaluate_campaign.py` measures it and compares it with the
+prediction (`monitoring/campaign.py`):
+
+- **Overall:** realized uplift (texted minus held-back purchase rate) with a
+  95% bootstrap interval; the mean predicted uplift of the same clients; the
+  gap between them; and a flag when the prediction falls outside the realized
+  interval. Also the purchases the texts caused.
+- **By decile:** the same comparison in each predicted-uplift decile of the
+  batch, to show where the model over- or under-promises.
+- **Ranking:** Qini AUC and uplift in the top k% of the targeted clients,
+  from the real outcomes, with bootstrap intervals, next to the predicted
+  uplift at the same depths.
+
+Give it a results file (CSV or parquet), one row per targeted client with a
+result:
+
+| Column | Meaning |
+|---|---|
+| `client_id` | A client the batch texted or held back |
+| `treated` | 1 if texted, 0 if held back -- must match the batch's `send` / `holdout` |
+| `purchased` | 1 if the client bought in the campaign window |
+| `scoring_run_id` | The scoring run (batch) the campaign ran |
+
+```bash
+uv run --env-file .env python scripts/evaluate_campaign.py --results results.csv
+```
+
+The send list is found in `data/interim/scoring/` from the file's scoring
+run; pass `--batch <send_list.parquet>` for a batch scored elsewhere (export
+it from `promolift_ai.scoring.targets` for a job's batch). Options:
+`--n-bootstrap`, `--ranking-bootstrap`, `--confidence`, `--seed`. One run is
+logged to `promolift-campaigns`: metrics, a per-decile table, a summary, and
+a predicted-vs-realized plot.
+
+It refuses results that would make the comparison invalid: clients the batch
+never targeted, a `treated` flag that disagrees with the batch, a batch with
+no control group, or an arm with no results. Clients missing from the results
+are counted per arm and flagged: unequal gaps between the arms bias the
+comparison, so chase them before trusting the number.
+
+No campaign has been run on these clients, and every client with a known
+outcome is already used for training or evaluation, so the code is tested on
+simulated campaigns with a known effect (`monitoring/campaign_simulation.py`).
+`--demo` runs the evaluation on a simulated campaign over the latest local
+send list (`--effect-scale 1` = the model's promise is real, `0` = the texts
+do nothing) and writes nothing:
+
+```bash
+uv run python scripts/evaluate_campaign.py --demo --effect-scale 0.5
+```
 
 ## Status
 

@@ -25,16 +25,17 @@ _NAME = "uplift_scoring_test"
 _AT = datetime(2026, 10, 5, 9, 30, tzinfo=UTC)
 
 
-def _send_list(scores, client_ids=None, share=0.3):
+def _send_list(scores, client_ids=None, share=0.3, holdout=0.0, run_id="run123"):
     ids = client_ids if client_ids is not None else [f"c{i:02d}" for i in range(len(scores))]
     return send_list(
         pl.Series(ids),
         np.asarray(scores, dtype=float),
         send_share=share,
+        holdout_share=holdout,
         model_name=_NAME,
         model_version="1",
         scored_at=_AT,
-        scoring_run_id="run123",
+        scoring_run_id=run_id,
     )
 
 
@@ -48,6 +49,7 @@ def test_ranks_by_score_and_flags_the_top_share() -> None:
     assert targets["uplift_score"].is_sorted(descending=True)
     assert targets["client_id"][:3].to_list() == ["c01", "c05", "c03"]
     assert targets["send"].to_list() == [True] * 3 + [False] * 7
+    assert not targets["holdout"].any()
     assert targets["decile"].to_list() == list(range(1, 11))
     assert tuple(targets.columns) == SEND_LIST_COLUMNS
 
@@ -86,6 +88,74 @@ def test_send_list_records_its_provenance() -> None:
     assert row["scored_at"] == _AT
 
 
+# --- holdout -------------------------------------------------------------------------
+
+
+def test_holdout_is_taken_from_the_selected_clients_and_never_sent() -> None:
+    targets = _send_list(np.linspace(1, 0, 100), share=0.4, holdout=0.25)
+
+    selected = targets.filter(pl.col("rank") <= 40)
+    assert selected["holdout"].sum() == 10
+    assert selected["send"].sum() == 30
+    # Every selected client is either texted or held back, never both.
+    assert (selected["send"] ^ selected["holdout"]).all()
+    # Nobody outside the selection is texted or held back.
+    unselected = targets.filter(pl.col("rank") > 40)
+    assert not unselected["send"].any()
+    assert not unselected["holdout"].any()
+
+
+def test_holdout_is_random_not_the_lowest_ranked_selected() -> None:
+    targets = _send_list(np.linspace(1, 0, 1000), share=0.5, holdout=0.2)
+
+    held_ranks = targets.filter(pl.col("holdout"))["rank"]
+    assert held_ranks.min() < 100
+    assert held_ranks.max() > 400
+    # Spread across the selection: every fifth of it holds some of the 100 held-back
+    # clients (20 expected; the bounds leave room for the seeded draw's noise).
+    per_fifth = np.histogram(held_ranks.to_numpy(), bins=5, range=(1, 501))[0]
+    assert per_fifth.min() > 5
+    assert per_fifth.max() < 40
+
+
+def test_holdout_is_reproducible_per_batch_and_new_for_each_batch() -> None:
+    scores = np.linspace(1, 0, 200)
+
+    first = _send_list(scores, share=0.5, holdout=0.2, run_id="runA")
+    again = _send_list(scores, share=0.5, holdout=0.2, run_id="runA")
+    other = _send_list(scores, share=0.5, holdout=0.2, run_id="runB")
+
+    assert first["holdout"].to_list() == again["holdout"].to_list()
+    assert first["holdout"].to_list() != other["holdout"].to_list()
+    assert first["holdout"].sum() == other["holdout"].sum() == 20
+
+
+def test_holdout_does_not_depend_on_the_scores() -> None:
+    # The draw is positions in the ranking, so a different score distribution with the
+    # same run id holds back the same ranks.
+    low = _send_list(np.linspace(0.1, 0, 100), share=0.5, holdout=0.2)
+    high = _send_list(np.linspace(5, -5, 100), share=0.5, holdout=0.2)
+
+    assert low["holdout"].to_list() == high["holdout"].to_list()
+
+
+def test_a_zero_holdout_texts_everyone_selected() -> None:
+    targets = _send_list(np.linspace(1, 0, 20), share=0.5, holdout=0.0)
+
+    assert targets["send"].sum() == 10
+    assert targets["holdout"].sum() == 0
+
+
+def test_the_decile_summary_counts_held_back_clients() -> None:
+    targets = _send_list(np.linspace(1, 0, 100), share=0.4, holdout=0.25)
+
+    summary = decile_summary(targets)
+
+    assert summary["held_back"].sum() == 10
+    assert summary["sent"].sum() == 30
+    assert summary["held_back"].to_list()[4:] == [0] * 6
+
+
 def test_send_list_rejects_bad_inputs() -> None:
     with pytest.raises(ValueError, match="same length"):
         send_list(
@@ -101,6 +171,8 @@ def test_send_list_rejects_bad_inputs() -> None:
         _send_list([0.1, np.nan])
     with pytest.raises(ValueError, match="send_share"):
         _send_list([0.1, 0.2], share=1.5)
+    with pytest.raises(ValueError, match="holdout_share"):
+        _send_list([0.1, 0.2], holdout=1.0)
 
 
 # --- model input and end-to-end scoring ------------------------------------------
@@ -164,7 +236,31 @@ def test_scores_every_client_and_writes_the_batch(
     assert run.data.tags["model_version"] == "1"
     assert run.data.metrics["n_clients"] == 2
     assert run.data.metrics["n_send"] == 1
+    assert run.data.metrics["n_holdout"] == 0
     assert run.data.params["send_share"] == "0.5"
+    assert run.data.params["holdout_share"] == "0.0"
+
+
+def test_a_scoring_run_holds_back_and_records_the_control_group(
+    scoring_champion, client_features, lineage_dirs, tmp_path: Path
+) -> None:
+    result = run_batch_scoring(
+        client_features,
+        send_share=1.0,
+        holdout_share=0.5,
+        model_name=scoring_champion.name,
+        output_dir=tmp_path / "scoring",
+        scored_at=_AT,
+        config=scoring_champion.config,
+        lineage=lineage_dirs,
+    )
+
+    written = pl.read_parquet(result.path)
+    assert (written["send"].sum(), written["holdout"].sum()) == (1, 1)
+    run = MlflowClient(tracking_uri=scoring_champion.config.tracking_uri).get_run(result.run_id)
+    assert run.data.metrics["n_send"] == 1
+    assert run.data.metrics["n_holdout"] == 1
+    assert run.data.params["holdout_share"] == "0.5"
 
 
 def test_the_sink_writes_inside_the_run_with_extra_tags(
