@@ -1,0 +1,46 @@
+name: Deploy
+
+# Pull requests are merged only with CI green, so a push to main is already tested.
+# The `production` environment holds the deploy for a required reviewer.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # The bundle builds the wheel with `uv build --wheel`.
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install Databricks CLI
+        uses: databricks/setup-cli@2bf4520fd10723ed5a22eca62a8c8a63714a7ba9 # v1.21.0
+        with:
+          version: 1.21.0
+
+      # Production mode refuses to deploy from any branch but main (databricks.yml).
+      # The credentials reach only this step.
+      - name: Validate and deploy the prod target
+        run: |
+          databricks bundle validate --target prod --strict
+          databricks bundle deploy --target prod
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+          DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
