@@ -91,6 +91,9 @@ source = ["promolift"]
 branch = true
 
 [tool.coverage.report]
+# Measured 97.78% (line + branch) on 463 tests; the margin absorbs OS-specific
+# branches, since CI runs on macOS, Linux, and Windows. Raise it as coverage grows.
+fail_under = 97
 show_missing = true
 skip_empty = true
 
