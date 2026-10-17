@@ -74,6 +74,7 @@ dev = [
     "ipykernel>=7.3.0",
     "jupyter>=1.1.1",
     "pytest>=9.1.1",
+    "pytest-cov>=7.1.0",
     "ruff>=0.16.8",
 ]
 
@@ -84,6 +85,17 @@ src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "C4", "SIM", "RUF"]
+
+[tool.coverage.run]
+source = ["promolift"]
+branch = true
+
+[tool.coverage.report]
+# Measured 97.78% (line + branch) on 463 tests; the margin absorbs OS-specific
+# branches, since CI runs on macOS, Linux, and Windows. Raise it as coverage grows.
+fail_under = 97
+show_missing = true
+skip_empty = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

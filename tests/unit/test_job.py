@@ -197,6 +197,47 @@ def test_the_job_runs_on_the_serverless_environment_these_tests_assume() -> None
     assert environment["spec"]["environment_version"] == _SERVERLESS_ENVIRONMENT
 
 
+def _bundle() -> dict:
+    return yaml.safe_load((_REPO / "databricks.yml").read_text())
+
+
+def test_prod_deploys_in_production_mode_from_main_as_the_service_principal() -> None:
+    prod = _bundle()["targets"]["prod"]
+
+    assert prod["mode"] == "production"
+    assert prod["git"]["branch"] == "main"
+    principal = prod["run_as"]["service_principal_name"]
+    assert prod["workspace"]["root_path"].startswith(f"/Workspace/Users/{principal}/")
+    # The principal must be able to manage its own deployment folder.
+    assert {"service_principal_name": principal, "level": "CAN_MANAGE"} in prod["permissions"]
+
+
+def test_prod_writes_to_its_own_tables_never_the_dev_ones() -> None:
+    bundle = _bundle()
+    overrides = bundle["targets"]["prod"]["variables"]
+    tables = ("targets_table", "latest_view", "drift_table")
+
+    for name in tables:
+        assert overrides[name] != bundle["variables"][name]
+        assert overrides[name].startswith("promolift_ai.scoring_prod.")
+    # Three distinct objects: a view and two tables sharing a name would collide.
+    assert len({overrides[name] for name in tables}) == len(tables)
+
+
+def test_every_target_override_names_a_defined_variable() -> None:
+    bundle = _bundle()
+
+    for target in bundle["targets"].values():
+        assert set(target.get("variables", {})) <= set(bundle["variables"])
+
+
+def test_the_schedule_stays_paused_in_every_target() -> None:
+    # Production mode does not pause schedules, so the job definition must.
+    job = _bundle()["resources"]["jobs"]["score_clients"]
+
+    assert job["schedule"]["pause_status"] == "PAUSED"
+
+
 def test_the_wheel_accepts_the_serverless_core_package_versions() -> None:
     # A lower bound above the environment's version makes pip replace a core
     # package, and the job fails before running (ERROR_CORE_PACKAGE_VERSION_CHANGE).

@@ -15,14 +15,14 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Install libomp (macOS only, required by LightGBM)
         if: runner.os == 'macOS'
         run: brew install libomp
 
       - name: Install uv and Python
-        uses: astral-sh/setup-uv@v10.2.0
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           python-version: "3.12"
           enable-cache: true
@@ -36,5 +36,17 @@ jobs:
       - name: Lint
         run: uv run ruff check .
 
-      - name: Run unit tests
-        run: uv run pytest
+      - name: Run unit tests with coverage
+        run: uv run pytest --cov --cov-report=term --cov-report=xml
+
+      - name: Summarize coverage
+        if: runner.os == 'Linux'
+        shell: bash
+        run: uv run coverage report --format=markdown >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload coverage report
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: coverage-xml
+          path: coverage.xml

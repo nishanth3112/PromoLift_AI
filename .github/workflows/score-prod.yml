@@ -1,0 +1,37 @@
+name: Score clients (prod)
+
+# Manual only: every run appends a batch to the production history, and the X5
+# snapshot is static, so there is no schedule.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: score-prod
+  cancel-in-progress: false
+
+jobs:
+  score:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Install Databricks CLI
+        uses: databricks/setup-cli@2bf4520fd10723ed5a22eca62a8c8a63714a7ba9 # v1.21.0
+        with:
+          version: 1.21.0
+
+      # Waits for the run and fails if the job fails (a drifted batch included).
+      # The credentials reach only this step.
+      - name: Run the scoring job
+        run: databricks bundle run score_clients --target prod
+        env:
+          DATABRICKS_AUTH_TYPE: oauth-m2m
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+          DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
