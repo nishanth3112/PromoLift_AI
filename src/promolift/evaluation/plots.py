@@ -1,4 +1,4 @@
-"""Static plots logged as MLflow artifacts: Qini curves, decile uplift, and profit curves.
+"""Static plots logged as MLflow artifacts: Qini, decile uplift, profit, and campaign calibration.
 
 Built on ``matplotlib.figure.Figure`` directly rather than pyplot, so no GUI
 backend or global figure state is involved (safe on headless CI). Colors,
@@ -16,6 +16,8 @@ from matplotlib.figure import Figure
 from matplotlib.ticker import PercentFormatter
 
 if TYPE_CHECKING:
+    import polars as pl
+
     from promolift.evaluation.report import EvaluationReport
     from promolift.optimization.targeting import ProfitCurve
 
@@ -162,5 +164,48 @@ def profit_curve_figure(
     axes.xaxis.set_major_formatter(PercentFormatter())
     axes.set_xlabel("Clients texted, ranked by score", fontsize=9)
     axes.set_ylabel("Profit per 1,000 clients", fontsize=9)
+    axes.legend(frameon=False, loc="best", fontsize=8, labelcolor=_INK_PRIMARY)
+    return figure
+
+
+def decile_calibration_figure(deciles: pl.DataFrame) -> Figure:
+    """Realized uplift (with its interval) against predicted uplift, per score decile of a campaign.
+
+    ``deciles`` is ``monitoring.campaign.decile_comparison``'s table. A
+    calibrated model has the realized points on the predicted line; deciles
+    without both arms are left out.
+    """
+    shown = deciles.filter(deciles["realized_uplift"].is_not_null())
+    figure, axes = _axes("Campaign uplift by predicted-uplift decile")
+    deciles_axis = shown["decile"].to_list()
+    realized = shown["realized_uplift"].to_numpy() * 100
+    axes.errorbar(
+        deciles_axis,
+        realized,
+        yerr=[
+            realized - shown["realized_lower"].to_numpy() * 100,
+            shown["realized_upper"].to_numpy() * 100 - realized,
+        ],
+        color=_SERIES[0],
+        linestyle="none",
+        marker="o",
+        markersize=6,
+        capsize=3,
+        linewidth=1.4,
+        label="realized (95% interval)",
+    )
+    axes.plot(
+        deciles_axis,
+        shown["predicted_uplift"].to_numpy() * 100,
+        color=_SERIES[1],
+        linewidth=2,
+        marker="s",
+        markersize=5,
+        label="predicted",
+    )
+    axes.axhline(0, color=_AXIS, linewidth=0.8)
+    axes.set_xticks(deciles_axis)
+    axes.set_xlabel("Score decile, highest predicted uplift first", fontsize=9)
+    axes.set_ylabel("Uplift (pp)", fontsize=9)
     axes.legend(frameon=False, loc="best", fontsize=8, labelcolor=_INK_PRIMARY)
     return figure

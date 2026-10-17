@@ -55,6 +55,7 @@ class Experiment(StrEnum):
     TARGETING = "promolift-targeting"
     MODELS = "promolift-models"
     SCORING = "promolift-scoring"
+    CAMPAIGNS = "promolift-campaigns"
 
 
 @dataclass(frozen=True)
