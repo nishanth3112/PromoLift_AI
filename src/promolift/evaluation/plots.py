@@ -1,4 +1,4 @@
-"""Static plots logged as MLflow artifacts: Qini, decile uplift, profit, and campaign calibration.
+"""Static plots logged as MLflow artifacts: Qini, decile uplift, profit, campaign, and SHAP.
 
 Built on ``matplotlib.figure.Figure`` directly rather than pyplot, so no GUI
 backend or global figure state is involved (safe on headless CI). Colors,
@@ -30,12 +30,20 @@ _INK_SECONDARY = "#52514e"
 _INK_MUTED = "#898781"
 _GRID = "#e1e0d9"
 _AXIS = "#c3c2b7"
+# The row label dependence tables give clients missing a feature
+# (explainability.importance.MISSING_LABEL; a test keeps the two equal).
+_MISSING_LABEL = "missing"
 
 
 def _axes(title: str) -> tuple[Figure, Axes]:
     figure = Figure(figsize=(7.0, 4.2), dpi=150, facecolor=_SURFACE, layout="constrained")
     axes = figure.add_subplot(facecolor=_SURFACE)
-    axes.set_title(title, loc="left", color=_INK_PRIMARY, fontsize=11, fontweight="bold")
+    _style_axes(axes, title)
+    return figure, axes
+
+
+def _style_axes(axes: Axes, title: str, *, title_size: int = 11) -> None:
+    axes.set_title(title, loc="left", color=_INK_PRIMARY, fontsize=title_size, fontweight="bold")
     for side in ("top", "right"):
         axes.spines[side].set_visible(False)
     for side in ("left", "bottom"):
@@ -46,7 +54,6 @@ def _axes(title: str) -> tuple[Figure, Axes]:
     axes.set_axisbelow(True)
     axes.xaxis.label.set_color(_INK_SECONDARY)
     axes.yaxis.label.set_color(_INK_SECONDARY)
-    return figure, axes
 
 
 def qini_curve_figure(reports: Sequence[EvaluationReport]) -> Figure:
@@ -208,4 +215,97 @@ def decile_calibration_figure(deciles: pl.DataFrame) -> Figure:
     axes.set_xlabel("Score decile, highest predicted uplift first", fontsize=9)
     axes.set_ylabel("Uplift (pp)", fontsize=9)
     axes.legend(frameon=False, loc="best", fontsize=8, labelcolor=_INK_PRIMARY)
+    return figure
+
+
+def importance_figure(importance: pl.DataFrame, *, top: int = 12) -> Figure:
+    """Mean absolute SHAP contribution of the ``top`` features, in percentage points of uplift.
+
+    ``importance`` is ``explainability.importance.global_importance``'s table
+    (most important first); each bar is labelled with the feature's share of
+    the total across all features.
+    """
+    shown = importance.head(top)
+    figure, axes = _axes("What drives a client's predicted uplift")
+    labels = shown["feature"].to_list()
+    values = shown["mean_abs_contribution"].to_numpy() * 100
+    axes.barh(range(len(labels)), values, color=_SERIES[0], height=0.65)
+    axes.set_yticks(range(len(labels)), labels)
+    axes.invert_yaxis()
+    axes.grid(axis="y", visible=False)
+    axes.grid(axis="x", color=_GRID, linewidth=0.5)
+    for position, (value, share) in enumerate(zip(values, shown["share"].to_list(), strict=True)):
+        axes.annotate(
+            f"{share:.0%}",
+            xy=(value, position),
+            xytext=(4, 0),
+            textcoords="offset points",
+            va="center",
+            fontsize=8,
+            color=_INK_SECONDARY,
+        )
+    axes.set_xlabel("Mean absolute contribution to uplift (pp); labels: share of total", fontsize=9)
+    return figure
+
+
+def dependence_figure(tables: Mapping[str, pl.DataFrame], *, columns: int = 3) -> Figure:
+    """Mean SHAP contribution along each feature, one small panel per feature.
+
+    ``tables`` maps a feature name to ``explainability.importance.dependence_table``'s
+    table. Numeric features are drawn as a line through their bins, categorical
+    ones as bars; clients missing the feature get a hollow marker at the end.
+    """
+    if not tables:
+        raise ValueError("need at least one feature to plot")
+    rows = -(-len(tables) // columns)
+    figure = Figure(
+        figsize=(3.6 * min(columns, len(tables)), 2.9 * rows),
+        dpi=150,
+        facecolor=_SURFACE,
+        layout="constrained",
+    )
+    for axes, (feature, table) in zip(
+        figure.subplots(rows, min(columns, len(tables)), squeeze=False).ravel(),
+        tables.items(),
+        strict=False,
+    ):
+        axes.set_facecolor(_SURFACE)
+        _style_axes(axes, feature, title_size=9)
+        positions = list(range(table.height))
+        effect = table["mean_contribution"].to_numpy() * 100
+        missing = table["label"].to_numpy() == _MISSING_LABEL
+        ordered = ~missing
+        numeric = table["mean_value"].drop_nulls().len() > 0
+        if numeric:
+            axes.plot(
+                [p for p, keep in zip(positions, ordered, strict=True) if keep],
+                effect[ordered],
+                color=_SERIES[0],
+                linewidth=1.8,
+                marker="o",
+                markersize=4,
+            )
+        else:
+            axes.bar(
+                [p for p, keep in zip(positions, ordered, strict=True) if keep],
+                effect[ordered],
+                color=_SERIES[0],
+                width=0.6,
+            )
+        if missing.any():
+            axes.plot(
+                [p for p, miss in zip(positions, missing, strict=True) if miss],
+                effect[missing],
+                linestyle="none",
+                marker="o",
+                markersize=5,
+                markerfacecolor=_SURFACE,
+                markeredgecolor=_SERIES[1],
+            )
+        axes.axhline(0, color=_AXIS, linewidth=0.8)
+        axes.set_xticks(positions, table["label"].to_list(), rotation=45, ha="right")
+        axes.tick_params(axis="x", labelsize=7)
+        axes.set_ylabel("pp", fontsize=8)
+    for axes in figure.axes[len(tables) :]:
+        axes.set_visible(False)
     return figure
