@@ -84,8 +84,11 @@ From `docs/final_results.md` (40,008 clients never used before):
   clients, and `scripts/evaluate_campaign.py` compares a campaign's realized
   uplift with this model's prediction, so a shifted effect shows up in results
   instead of being assumed away.
-- **Fairness.** `gender` and `age` are inputs. Their effect on who gets
-  promotions has not been reviewed.
+- **Fairness.** `gender` and `age` are inputs. `age` is the model's largest
+  single driver (22% of feature importance; mean predicted uplift is 2.2pp for
+  clients under 30 and 4.7pp for those 60 and over), while `gender` contributes
+  about 2% (`docs/explainability_results.md`). Whether targeting that follows age
+  is acceptable has not been reviewed.
 
 ## Lineage (version tags)
 
