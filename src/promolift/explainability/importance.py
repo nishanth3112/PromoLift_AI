@@ -8,7 +8,8 @@ fraction of the total over all features.
 Direction is the rank correlation between a feature's value and its
 contribution: positive means higher values raise the predicted uplift. It
 says nothing for features that act in both directions (U-shapes, thresholds),
-which the dependence table shows bin by bin.
+which the dependence table shows bin by bin. A feature with no contribution at
+all is "unused by the model".
 """
 
 from __future__ import annotations
@@ -27,8 +28,17 @@ DEFAULT_BINS = 10
 MISSING_LABEL = "missing"
 
 
+UNUSED = "unused by the model"
+
+
 def _direction(values: pd.Series, contribution: pd.Series) -> tuple[float | None, str]:
-    """Spearman correlation of a numeric feature with its contribution, and its reading."""
+    """Spearman correlation of a numeric feature with its contribution, and its reading.
+
+    A feature the model never splits on contributes the same (zero) to every
+    client, so there is no direction to read.
+    """
+    if contribution.nunique() < 2:
+        return None, UNUSED
     if not pd.api.types.is_numeric_dtype(values.dtype):
         return None, "categorical"
     present = values.notna()

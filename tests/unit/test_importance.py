@@ -1,5 +1,7 @@
 """Unit tests for global importance and dependence tables."""
 
+import warnings
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -7,6 +9,7 @@ import pytest
 from promolift.explainability.importance import (
     DIRECTION_THRESHOLD,
     MISSING_LABEL,
+    UNUSED,
     dependence_table,
     global_importance,
 )
@@ -53,8 +56,32 @@ def test_a_feature_that_lowers_uplift_as_it_rises_is_labelled_so() -> None:
     assert rows["falls"]["direction"] == "higher value, lower uplift"
     assert rows["falls"]["direction_corr"] == pytest.approx(-1.0)
     assert rows["rises"]["direction"] == "higher value, higher uplift"
-    assert rows["flat"]["direction"] == "constant"
+    assert rows["flat"]["direction"] == UNUSED
     assert rows["flat"]["direction_corr"] is None
+
+
+def test_a_feature_the_model_never_uses_is_reported_without_a_warning() -> None:
+    explanation = _handmade(
+        {"used": np.arange(50, dtype=float), "ignored": np.arange(50, dtype=float)},
+        {"used": np.linspace(-1, 1, 50), "ignored": np.zeros(50)},
+    )
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")  # a constant-input correlation warning would fail here
+        rows = {r["feature"]: r for r in global_importance(explanation).iter_rows(named=True)}
+
+    assert rows["ignored"]["direction"] == UNUSED
+    assert rows["ignored"]["mean_abs_contribution"] == 0
+    assert rows["ignored"]["share"] == 0
+    assert rows["used"]["direction"] == "higher value, higher uplift"
+
+
+def test_a_feature_with_one_value_everywhere_is_constant() -> None:
+    explanation = _handmade({"x": np.ones(20)}, {"x": np.linspace(-1, 1, 20)})
+
+    (row,) = global_importance(explanation).iter_rows(named=True)
+
+    assert row["direction"] == "constant"
 
 
 def test_a_feature_acting_in_both_directions_is_mixed() -> None:
