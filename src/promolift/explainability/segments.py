@@ -51,6 +51,18 @@ def _tier(scores: np.ndarray, index: pd.Index) -> pd.Series:
     return labels
 
 
+def age_band(age: pd.Series, is_valid: pd.Series | None = None) -> pd.Series:
+    """Age-band label per client; missing or flagged-invalid ages are ``AGE_NOT_VALID``.
+
+    Args:
+        age: Age in years, NaN where unknown.
+        is_valid: 1 where the age is believed (``age_is_valid``); None trusts every known age.
+    """
+    trusted = age.notna() if is_valid is None else (is_valid == 1) & age.notna()
+    band = pd.cut(age, bins=list(AGE_EDGES), right=False, labels=list(AGE_LABELS))
+    return band.astype(object).where(trusted, AGE_NOT_VALID)
+
+
 def default_segments(explanation: Explanation) -> dict[str, pd.Series]:
     """Segment labels per client, aligned to the explanation, for the groupings that apply.
 
@@ -62,10 +74,8 @@ def default_segments(explanation: Explanation) -> dict[str, pd.Series]:
     if "gender" in features.columns:
         segments[GENDER_SEGMENT] = features["gender"].astype(object).fillna("missing").astype(str)
     if "age" in features.columns:
-        age = features["age"]
-        valid = features["age_is_valid"] == 1 if "age_is_valid" in features.columns else age.notna()
-        band = pd.cut(age, bins=list(AGE_EDGES), right=False, labels=list(AGE_LABELS))
-        segments[AGE_SEGMENT] = band.astype(object).where(valid & age.notna(), AGE_NOT_VALID)
+        valid = features["age_is_valid"] if "age_is_valid" in features.columns else None
+        segments[AGE_SEGMENT] = age_band(features["age"], valid)
     return segments
 
 
