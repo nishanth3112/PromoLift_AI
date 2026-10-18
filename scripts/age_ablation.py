@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import warnings
 
 from promolift.data.split import Split
 from promolift.evaluation.uncertainty import DEFAULT_N_BOOTSTRAP
@@ -44,6 +45,11 @@ from promolift.models.selection import (
 from promolift.models.tuning import DEFAULT_N_FOLDS, load_tuned_params
 from promolift.optimization.business import load_business_config
 from promolift.tracking.mlflow_tracking import TrackingConfig, default_tracking_config
+
+# scikit-uplift calls a scikit-learn helper deprecated in 1.8 (pinned below 1.10, see
+# pyproject.toml). The bootstrap would print the warning once per resample; pytest
+# filters the same message.
+warnings.filterwarnings("ignore", message="Function stable_cumsum is deprecated")
 
 
 def main() -> int:
