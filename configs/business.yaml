@@ -1,12 +1,17 @@
 # Campaign economics for budget targeting (scripts/targeting_analysis.py).
-# Every value below is a PLACEHOLDER ASSUMPTION until the business confirms it.
+# X5 RetailHero is a public dataset, so there is no business to confirm these
+# with: every value below is an ASSUMPTION, sourced as noted. Replace them with
+# real figures (a provider quote, Finance's margin) before relying on the profits.
 # The best targeting depth depends only on sms_cost / margin_per_purchase, so
 # the break-even table in docs/targeting_results.md covers other values too.
 currency: RUB
-# Assumed bulk-SMS price per message.
+# ASSUMED bulk-SMS price per message. No 2019 bulk price was found; recent price
+# guides put domestic-operator SMS at roughly 1-2 RUB. Replace with a provider quote.
 sms_cost: 3.0
-# Assumed grocery gross margin, as a fraction of basket value.
-gross_margin: 0.24
+# X5 Retail Group's reported 2019 gross margin, as a fraction of sales: 24.6%
+# (IAS 17; 24.9% under IFRS 16), from its Q4 2019 financial results (x5.com).
+# A gross margin, not profit after store costs, so it flatters one extra purchase.
+gross_margin: 0.246
 # Profit per extra purchase the SMS causes. null = the average transaction value
 # in purchases.csv times gross_margin (one extra transaction per converted client).
 margin_per_purchase: null
