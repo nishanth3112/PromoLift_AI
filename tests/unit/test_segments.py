@@ -10,6 +10,7 @@ from promolift.explainability.segments import (
     AGE_SEGMENT,
     GENDER_SEGMENT,
     TIER_SEGMENT,
+    age_band,
     default_segments,
     segment_importance,
     top_features,
@@ -64,6 +65,21 @@ def test_age_bands_and_invalid_ages() -> None:
     assert bands.iloc[0] == AGE_NOT_VALID
     assert bands.iloc[1] == AGE_NOT_VALID
     assert bands.iloc[2:6].tolist() == ["45-59", "60 and over", "under 30", "30-44"]
+
+
+def test_age_band_labels_ages_and_flags_untrusted_ones() -> None:
+    age = pd.Series([18.0, 29.9, 30.0, 44.0, 45.0, 59.0, 60.0, 90.0, np.nan, 5.0])
+    is_valid = pd.Series([1, 1, 1, 1, 1, 1, 1, 1, 1, 0])
+
+    bands = age_band(age, is_valid)
+
+    assert bands.tolist() == [
+        "under 30", "under 30", "30-44", "30-44", "45-59", "45-59",
+        "60 and over", "60 and over", AGE_NOT_VALID, AGE_NOT_VALID,
+    ]  # fmt: skip
+    # Without the flag every known age is trusted; only the missing one is not.
+    assert age_band(age).tolist()[-1] == "under 30"
+    assert age_band(age).tolist()[-2] == AGE_NOT_VALID
 
 
 def test_gender_segments_use_the_levels_present() -> None:
