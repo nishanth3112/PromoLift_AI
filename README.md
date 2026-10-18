@@ -569,6 +569,34 @@ features cause: correlated features share credit, and a feature the model
 leans on may not move buying. It is also a view of a weak model (see the model
 card), so small differences between features are noise.
 
+### Age check
+
+SHAP shows the champion leans on `age` more than on any other feature; it can't
+say how much worse the model would be without it.
+`scripts/age_ablation.py` answers that (`explainability/feature_removal.py`):
+the chosen model, with its tuned parameters held fixed, is fitted twice on the
+same train + val folds -- with every feature, and without `age` and
+`age_is_valid` -- and every client is scored by a fold model that never saw
+them. The two rankings are compared on the same bootstrap resamples:
+
+- **Ranking quality:** Qini AUC and uplift at the deployed targeting depth
+  (`send_share`), each with a paired 95% interval for the difference.
+- **Who gets texted:** the age mix of the top `send_share` of clients under each
+  ranking against the whole population, and how strongly each score still
+  follows age (rank correlation). Removing `age` does not remove age
+  information -- tenure, spend, and points correlate with it -- so the second
+  number says how much is left.
+
+```bash
+uv run --env-file .env python scripts/age_ablation.py
+```
+
+Options: `--drop` (other features to remove), `--depth`, `--n-folds`,
+`--n-bootstrap`, `--seed`, `--no-log` (print only). One run is logged to
+`promolift-feature-ablation`. The test split is never loaded. It measures a
+trade-off; whether to drop `age` is a decision for the campaign owner, and this
+is not a fairness or legal assessment.
+
 ## CI/CD
 
 Four GitHub Actions workflows in `.github/workflows/`:
