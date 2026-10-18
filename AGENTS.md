@@ -27,8 +27,8 @@ Keep reusable logic in `src/promolift/`; notebooks and `scripts/` only orchestra
 
 ## Architecture
 
-`data/` owns loading and the canonical split, `validation/` data and experiment checks, `features/` leakage-free client features, `evaluation/` uplift metrics, `optimization/` campaign economics and targeting depth, `serving/` the packaged model, its registry, and batch scoring, `monitoring/` drift checks and campaign evaluation, and `tracking/` MLflow configuration and lineage. Start runs with `tracking.mlflow_tracking.start_run`, not bare `mlflow`. The test split is locked and its one final evaluation is done (`docs/final_results.md`): never load it again.
+`data/` owns loading and the canonical split, `validation/` data and experiment checks, `features/` leakage-free client features, `evaluation/` uplift metrics, `optimization/` campaign economics and targeting depth, `serving/` the packaged model, its registry, and batch scoring, `monitoring/` drift checks and campaign evaluation, `explainability/` SHAP explanations of the champion, and `tracking/` MLflow configuration and lineage. Start runs with `tracking.mlflow_tracking.start_run`, not bare `mlflow`. The test split is locked and its one final evaluation is done (`docs/final_results.md`): never load it again.
 
 ## Definition of Done
 
-Add deterministic tests on synthetic temp fixtures. Keep CI tests free of raw data, credentials, and external services (only the bundle workflows use Databricks secrets; they never run tests). Document new configuration and scripts in the README. Build only the current roadmap phase; don't implement explainability or other new capabilities unless asked. Never commit `.env`, credentials, data, or `mlruns/`.
+Add deterministic tests on synthetic temp fixtures. Keep CI tests free of raw data, credentials, and external services (only the bundle workflows use Databricks secrets; they never run tests). Document new configuration and scripts in the README. Build only the current roadmap phase; don't implement new capabilities unless asked. Never commit `.env`, credentials, data, or `mlruns/`.
