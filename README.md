@@ -301,8 +301,10 @@ purchase: keep texting while the next clients' uplift exceeds it.
 - A sensitivity table repeats the decision for each break-even uplift in the
   config, so it answers for any real cost and margin without a re-run.
 
-The economics live in `configs/business.yaml`; every value there is a
-placeholder assumption until the business confirms it:
+The economics live in `configs/business.yaml`. X5 RetailHero is a public
+dataset, so every value there is an assumption: the margin is X5's reported
+2019 gross margin (24.6%), the SMS cost an assumed price. Replace them with
+real figures before relying on the profits:
 
 | Key | Meaning |
 |---|---|
@@ -319,8 +321,8 @@ uv run --env-file .env python scripts/targeting_analysis.py   # a few minutes
 
 Logs one run to `promolift-targeting` (decision, profit curves, sensitivity
 table, plot). Results: [docs/targeting_results.md](docs/targeting_results.md)
-— with the placeholder economics, texting the top 38% earns ~3× texting
-everyone, and the response model loses money at every depth up to 50%. Options: `--references`, `--n-folds`, `--n-bootstrap`, `--seed`,
+— with the assumed economics, texting the top 38% earns ~2.6× texting
+everyone, and the response model loses money at every depth up to 61%. Options: `--references`, `--n-folds`, `--n-bootstrap`, `--seed`,
 `--leaderboard-run`, `--leaderboard-tracking-uri`.
 
 ## Model packaging and registry

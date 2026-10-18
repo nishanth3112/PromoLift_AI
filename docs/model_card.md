@@ -13,7 +13,7 @@
 
 Rank clients for an SMS promotion by how much the message *changes* their
 probability of buying, then text the top share chosen by the economics
-(`docs/targeting_results.md`: the top 38% with the placeholder costs). The
+(`docs/targeting_results.md`: the top 38% with the assumed costs). The
 score ranks; the depth comes from `configs/business.yaml` at scoring time,
 so new costs or margins never require a new model version.
 
