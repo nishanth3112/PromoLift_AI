@@ -87,8 +87,12 @@ From `docs/final_results.md` (40,008 clients never used before):
 - **Fairness.** `gender` and `age` are inputs. `age` is the model's largest
   single driver (22% of feature importance; mean predicted uplift is 2.2pp for
   clients under 30 and 4.7pp for those 60 and over), while `gender` contributes
-  about 2% (`docs/explainability_results.md`). Whether targeting that follows age
-  is acceptable has not been reviewed.
+  about 2% (`docs/explainability_results.md`). A refit without `age` loses a
+  small, borderline amount of ranking quality (Qini AUC +0.0143 to +0.0120) and
+  removes most of the age skew in who is texted: 41.5% of texted clients are 60
+  or over with `age`, 27.5% without (`docs/age_check_results.md`). Whether to
+  keep `age`, and whether targeting that follows age is acceptable, has not
+  been decided or reviewed.
 
 ## Lineage (version tags)
 

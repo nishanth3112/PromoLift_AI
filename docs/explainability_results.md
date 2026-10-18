@@ -93,9 +93,9 @@ unknown.
 
 A model that leans most on age will send more texts to older clients and fewer
 to younger ones. Whether that is acceptable for this campaign has not been
-reviewed, and this note is not a legal assessment. If it matters, a check worth
-running is a refit without `age` to see how much of the ranking quality it
-carries (not done here).
+reviewed, and this note is not a legal assessment. The follow-up check is in
+[`age_check_results.md`](age_check_results.md): refitting without `age` costs
+a small, borderline amount of ranking quality and removes most of the skew.
 
 ## Caveats
 
